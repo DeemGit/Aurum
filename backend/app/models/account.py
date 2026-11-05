@@ -22,8 +22,16 @@ class Account(Base, TimestampMixin):
     color: Mapped[str | None] = mapped_column(String(7), nullable=True)
     is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # How auto cashback on expenses is rounded for this account's bank rules.
+    # values_callable: persist/read .value ("percent_floor"), not .name — matches
+    # the migration server_default and the API/frontend wire format.
     cashback_rounding: Mapped[CashbackRounding] = mapped_column(
-        Enum(CashbackRounding, name="cashback_rounding", native_enum=False, length=20),
+        Enum(
+            CashbackRounding,
+            name="cashback_rounding",
+            native_enum=False,
+            length=20,
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+        ),
         nullable=False,
         default=CashbackRounding.PERCENT_FLOOR,
     )
