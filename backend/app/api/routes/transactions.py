@@ -12,7 +12,7 @@ from app.core.audit import log_destructive
 from app.models.category import Category
 from app.models.enums import CategoryKind, TransactionType
 from app.models.tag import Tag
-from app.models.transaction import Transaction, TransactionSplit
+from app.models.transaction import Transaction, TransactionImportHash, TransactionSplit
 from app.schemas.transaction import (
     TransactionBulkCreate,
     TransactionBulkCreateResult,
@@ -31,6 +31,7 @@ from app.schemas.transaction import (
     transfer_rule_violation,
 )
 from app.services.transaction_domain import (
+    attach_import_hash,
     ensure_refund_target,
     find_transfer_match_candidates,
     merge_into_transfer,
@@ -40,6 +41,7 @@ router = APIRouter(prefix="/transactions", tags=["transactions"])
 
 _EAGER = (
     selectinload(Transaction.account),
+    selectinload(Transaction.transfer_account),
     selectinload(Transaction.category),
     selectinload(Transaction.tags),
     selectinload(Transaction.cashback_category),
@@ -264,7 +266,9 @@ async def create_transaction(payload: TransactionCreate, session: AsyncSession =
             amount=payload.amount,
         )
     fields = payload.model_dump(exclude={"tag_ids", "splits"})
+    digest = fields.pop("import_hash", None)
     transaction = Transaction(**fields)
+    attach_import_hash(transaction, payload.account_id, digest)
     transaction.tags = await _resolve_tags(session, payload.tag_ids)
     if payload.splits:
         transaction.splits = await _build_splits(session, payload.splits, payload.type)
@@ -274,7 +278,11 @@ async def create_transaction(payload: TransactionCreate, session: AsyncSession =
     except Exception as exc:
         await session.rollback()
         # Unique (account_id, import_hash) — treat as a client-visible conflict.
-        if payload.import_hash and "uq_transactions_account_import_hash" in str(exc):
+        detail = str(exc)
+        if payload.import_hash and (
+            "uq_transactions_account_import_hash" in detail
+            or "uq_transaction_import_hashes_account_hash" in detail
+        ):
             raise HTTPException(status_code=409, detail="Duplicate import_hash for this account") from exc
         raise
     return await _load_transaction(session, transaction.id)
@@ -302,15 +310,16 @@ async def bulk_create_transactions(
         if item.import_hash:
             hashes_by_account.setdefault(item.account_id, set()).add(item.import_hash)
 
+    # Dedupe against both legs stored after merge-transfer (and migrated legacy hashes).
     existing_hashes: set[tuple[int, str]] = set()
     for account_id, hashes in hashes_by_account.items():
         rows = await session.execute(
-            select(Transaction.account_id, Transaction.import_hash).where(
-                Transaction.account_id == account_id,
-                Transaction.import_hash.in_(hashes),
+            select(TransactionImportHash.account_id, TransactionImportHash.import_hash).where(
+                TransactionImportHash.account_id == account_id,
+                TransactionImportHash.import_hash.in_(hashes),
             )
         )
-        existing_hashes.update((row[0], row[1]) for row in rows.all() if row[1])
+        existing_hashes.update((row[0], row[1]) for row in rows.all())
 
     transactions = []
     skipped = 0
@@ -322,7 +331,10 @@ async def bulk_create_transactions(
                 skipped += 1
                 continue
             seen_in_batch.add(key)
-        transaction = Transaction(**item.model_dump(exclude={"tag_ids", "splits"}))
+        fields = item.model_dump(exclude={"tag_ids", "splits"})
+        digest = fields.pop("import_hash", None)
+        transaction = Transaction(**fields)
+        attach_import_hash(transaction, item.account_id, digest)
         transaction.tags = await _resolve_tags(session, item.tag_ids)
         if item.splits:
             transaction.splits = await _build_splits(session, item.splits, item.type)

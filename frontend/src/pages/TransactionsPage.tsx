@@ -294,6 +294,7 @@ export function TransactionsPage() {
           ) : (
             <TransactionsTable
               items={data?.items ?? []}
+              viewAccountId={accountId ? Number(accountId) : null}
               onEdit={openEditModal}
               onDelete={handleDelete}
               onJumpToMonth={isSearching ? handleJumpToMonth : undefined}

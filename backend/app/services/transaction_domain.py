@@ -8,11 +8,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.enums import TransactionType
-from app.models.transaction import Transaction, TransactionSplit
+from app.models.transaction import Transaction, TransactionImportHash
 from app.schemas.transaction import normalize_occurred_at
 
 
 TRANSFER_MATCH_WINDOW = timedelta(days=2)
+
+
+def _as_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def attach_import_hash(transaction: Transaction, account_id: int, digest: str | None) -> None:
+    """Record a statement fingerprint on the transaction (and mirror on the legacy column)."""
+    if not digest:
+        return
+    transaction.import_hash = digest
+    transaction.import_hashes.append(
+        TransactionImportHash(account_id=account_id, import_hash=digest)
+    )
 
 
 async def ensure_refund_target(
@@ -71,9 +87,7 @@ async def find_transfer_match_candidates(
     if transaction.type not in (TransactionType.INCOME, TransactionType.EXPENSE):
         return []
     opposite = TransactionType.INCOME if transaction.type == TransactionType.EXPENSE else TransactionType.EXPENSE
-    occurred = transaction.occurred_at
-    if occurred.tzinfo is None:
-        occurred = occurred.replace(tzinfo=timezone.utc)
+    occurred = _as_aware_utc(transaction.occurred_at)
     window_start = occurred - TRANSFER_MATCH_WINDOW
     window_end = occurred + TRANSFER_MATCH_WINDOW
 
@@ -92,9 +106,7 @@ async def find_transfer_match_candidates(
     rows = list((await session.execute(stmt)).scalars().all())
 
     def delta_seconds(other: Transaction) -> int:
-        other_at = other.occurred_at
-        if other_at.tzinfo is None:
-            other_at = other_at.replace(tzinfo=timezone.utc)
+        other_at = _as_aware_utc(other.occurred_at)
         return int(abs((other_at - occurred).total_seconds()))
 
     ranked = sorted(((row, delta_seconds(row)) for row in rows), key=lambda item: (item[1], item[0].id))
@@ -120,32 +132,53 @@ async def merge_into_transfer(
     expense = source if source.type == TransactionType.EXPENSE else destination
     income = destination if source.type == TransactionType.EXPENSE else source
 
-    occurred = min(expense.occurred_at, income.occurred_at)
-    if occurred.tzinfo is None:
-        occurred = occurred.replace(tzinfo=timezone.utc)
+    # Snapshot before delete; CASCADE drops hash rows with the legs, and flush may expire attrs.
+    expense_hash = expense.import_hash
+    income_hash = income.import_hash
+    expense_account_id = expense.account_id
+    income_account_id = income.account_id
+    expense_amount = expense.amount
+    income_amount = income.amount
+    description = expense.description or income.description
+    merchant = expense.merchant or income.merchant
+    occurred = min(_as_aware_utc(expense.occurred_at), _as_aware_utc(income.occurred_at))
+
+    # Delete first and flush so unique (account_id, import_hash) is free before INSERT.
+    await session.delete(expense)
+    await session.delete(income)
+    await session.flush()
 
     transfer = Transaction(
-        account_id=expense.account_id,
-        transfer_account_id=income.account_id,
+        account_id=expense_account_id,
+        transfer_account_id=income_account_id,
         type=TransactionType.TRANSFER,
-        amount=expense.amount,
-        transfer_amount=transfer_amount if transfer_amount is not None else income.amount,
+        amount=expense_amount,
+        transfer_amount=transfer_amount if transfer_amount is not None else income_amount,
         exchange_rate=exchange_rate,
         fee_amount=fee_amount or Decimal("0"),
-        description=expense.description or income.description,
-        merchant=expense.merchant or income.merchant,
+        description=description,
+        merchant=merchant,
         notes=None,
         date=occurred.date(),
         occurred_at=occurred,
-        import_hash=expense.import_hash,
+        # Legacy column mirrors the source leg; both digests live in import_hashes.
+        import_hash=expense_hash,
         cashback_category_id=None,
         cashback_amount=None,
         is_cashback=False,
         category_id=None,
         refund_of_transaction_id=None,
     )
+    if expense_hash:
+        transfer.import_hashes.append(
+            TransactionImportHash(account_id=expense_account_id, import_hash=expense_hash)
+        )
+    if income_hash:
+        # Same digest on two accounts is still two unique (account_id, hash) pairs.
+        transfer.import_hashes.append(
+            TransactionImportHash(account_id=income_account_id, import_hash=income_hash)
+        )
+
     session.add(transfer)
-    await session.delete(expense)
-    await session.delete(income)
     await session.commit()
     return transfer

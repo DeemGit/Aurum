@@ -109,6 +109,7 @@ export interface Transaction {
   cashback_amount: string | null;
   is_cashback: boolean;
   account: Account;
+  transfer_account: Account | null;
   category: Category | null;
   cashback_category: CashbackCategory | null;
   tags: Tag[];

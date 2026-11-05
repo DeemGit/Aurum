@@ -364,6 +364,8 @@ class TransactionRead(TransactionFields):
 
     id: int
     account: AccountRead
+    # Present for transfers so the list UI can show "Source → Dest" without a second lookup.
+    transfer_account: AccountRead | None = None
     category: CategoryRead | None = None
     cashback_category: CashbackCategoryRead | None = None
     tags: list[TagRead] = Field(default_factory=list)

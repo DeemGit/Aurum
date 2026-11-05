@@ -3,7 +3,7 @@ from datetime import date as date_
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Numeric, String, Text, text
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -53,6 +53,8 @@ class Transaction(Base, TimestampMixin):
     # Precise operation time; `date` stays the calendar day used by filters/reports.
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # Bank statement row fingerprint for re-import dedupe (NULL for manual entries).
+    # Transfers that absorbed two import legs keep both digests in transaction_import_hashes;
+    # this column still mirrors the source (expense) leg for API/backward compatibility.
     import_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     cashback_category_id: Mapped[int | None] = mapped_column(
         ForeignKey("cashback_categories.id", ondelete="SET NULL"), nullable=True
@@ -73,6 +75,31 @@ class Transaction(Base, TimestampMixin):
     splits: Mapped[list["TransactionSplit"]] = relationship(
         back_populates="transaction", cascade="all, delete-orphan", order_by="TransactionSplit.id"
     )
+    import_hashes: Mapped[list["TransactionImportHash"]] = relationship(
+        back_populates="transaction", cascade="all, delete-orphan"
+    )
+
+
+class TransactionImportHash(Base):
+    """One statement-row fingerprint owned by a transaction.
+
+    Ordinary imports store a single row (account_id of the imported line).
+    After merge-transfer both legs' digests stay here so re-import of either
+    side still skips as a duplicate.
+    """
+
+    __tablename__ = "transaction_import_hashes"
+    __table_args__ = (
+        UniqueConstraint("account_id", "import_hash", name="uq_transaction_import_hashes_account_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transaction_id: Mapped[int] = mapped_column(ForeignKey("transactions.id", ondelete="CASCADE"), nullable=False)
+    # Account of the original statement row (source or dest leg), not always Transaction.account_id.
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    import_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    transaction: Mapped["Transaction"] = relationship(back_populates="import_hashes")
 
 
 class TransactionSplit(Base):

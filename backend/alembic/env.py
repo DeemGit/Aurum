@@ -9,10 +9,12 @@ from app.core.config import get_settings
 from app.db.base import Base
 from app.models import (  # noqa: F401 — registers metadata
     Account,
+    AccountCashbackRate,
     AppSettings,
     Asset,
     AssetValuation,
     Budget,
+    CashbackCategory,
     Category,
     CryptoHolding,
     CryptoSyncState,
@@ -22,6 +24,7 @@ from app.models import (  # noqa: F401 — registers metadata
     RecurringTransaction,
     Tag,
     Transaction,
+    TransactionImportHash,
     TransactionSplit,
 )
 

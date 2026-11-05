@@ -62,10 +62,21 @@ Write: `occurred_at` или только `date` → `occurred_at = date 00:00:00
 близкий `occurred_at` (окно ±2 дня, сортировка по `|Δt|`).
 
 Merge → одна transfer-строка; две старые удаляются.
+Порядок: DELETE обеих ног → flush → INSERT transfer (иначе unique
+`(account_id, import_hash)` конфликтует с ещё живой expense-ногой).
 
 При merge / смене type→transfer: кешбек **обнуляется**.
 
-`import_hash` после merge: hash source (expense).
+После merge оба `import_hash` (expense + income) пишутся в
+`transaction_import_hashes` с `account_id` исходной ноги. Legacy-колонка
+`transactions.import_hash` зеркалит hash source (expense).
+
+## 5.1. Отображение перевода в списке
+
+- Все счета: одна строка, сумма без знака (muted), подпись `Source → Dest`.
+- Фильтр по счёту-источнику: `-amount` в валюте source.
+- Фильтр по счёту-получателю: `+transfer_amount` в валюте dest.
+- API `TransactionRead.transfer_account` (eager) для подписи направления.
 
 ## 6. Кешбек
 
@@ -80,13 +91,16 @@ Merge → одна transfer-строка; две старые удаляются
 ## 7. `import_hash`
 
 - `String(64)` SHA-256 hex, nullable (ручные → NULL)
-- Unique `(account_id, import_hash)` WHERE NOT NULL
+- Legacy unique на `transactions (account_id, import_hash)` WHERE NOT NULL
+- Таблица `transaction_import_hashes`: unique `(account_id, import_hash)`;
+  bulk dedupe ищет по ней (поддерживает обе ноги после merge)
 - Bulk: skip duplicates → `skipped_duplicates` в ответе
 - Канон: account_id + date/time + amount + description (+ merchant) + preset id
 
 ## 8. Фильтр по счёту
 
-API уже: `GET /transactions?account_id=`. UI: select + deep-link со страницы счетов.
+API уже: `GET /transactions?account_id=` (включая `transfer_account_id`).
+UI: select + deep-link со страницы счетов; знак перевода зависит от фильтра.
 
 ## 9. Отчёты и агрегаты
 
@@ -112,5 +126,4 @@ API уже: `GET /transactions?account_id=`. UI: select + deep-link со стр�
 ## 11. Ограничения MVP
 
 - Нет таблицы рыночных `exchange_rates`
-- После merge hash второй ноги не хранится
 - Нет авто-кнопки «начислить кешбек по %»

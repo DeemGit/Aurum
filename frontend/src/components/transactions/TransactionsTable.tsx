@@ -12,13 +12,55 @@ interface TransactionsTableProps {
   items: Transaction[];
   onEdit: (transaction: Transaction) => void;
   onDelete: (transaction: Transaction) => void;
+  /** When set, transfer amounts show +/- relative to this account. */
+  viewAccountId?: number | null;
   /** Present only while showing search results, which span every month —
    * lets a row's date carry the year and offers a way to jump back to
    * browsing that transaction's month instead of just listing it flat. */
   onJumpToMonth?: (transaction: Transaction) => void;
 }
 
-export function TransactionsTable({ items, onEdit, onDelete, onJumpToMonth }: TransactionsTableProps) {
+function transferDirectionLabel(tx: Transaction): string {
+  const source = tx.account.name;
+  const dest = tx.transfer_account?.name ?? "?";
+  return `${source} → ${dest}`;
+}
+
+function transferAmountDisplay(
+  tx: Transaction,
+  viewAccountId: number | null | undefined,
+): { sign: string; text: string; className: string } {
+  const sourceAmount = formatCurrency(tx.amount, tx.account.currency);
+  const destCurrency = tx.transfer_account?.currency ?? tx.account.currency;
+  const destRaw = tx.transfer_amount ?? tx.amount;
+  const destAmount = formatCurrency(destRaw, destCurrency);
+
+  if (viewAccountId == null) {
+    const sameCurrency = tx.account.currency === destCurrency;
+    const sameValue = tx.transfer_amount == null || tx.transfer_amount === tx.amount;
+    const text = sameCurrency && sameValue ? sourceAmount : `${sourceAmount} / ${destAmount}`;
+    return { sign: "", text, className: "text-text-muted" };
+  }
+
+  if (viewAccountId === tx.account_id) {
+    return { sign: "-", text: sourceAmount, className: "text-text-primary" };
+  }
+
+  if (viewAccountId === tx.transfer_account_id) {
+    return { sign: "+", text: destAmount, className: "text-success" };
+  }
+
+  // Fallback if filter somehow doesn't match either leg.
+  return { sign: "", text: sourceAmount, className: "text-text-muted" };
+}
+
+export function TransactionsTable({
+  items,
+  onEdit,
+  onDelete,
+  viewAccountId = null,
+  onJumpToMonth,
+}: TransactionsTableProps) {
   const { t } = useTranslation();
   const { data: categories } = useCategories();
   const [noteTransaction, setNoteTransaction] = useState<Transaction | null>(null);
@@ -45,6 +87,10 @@ export function TransactionsTable({ items, onEdit, onDelete, onJumpToMonth }: Tr
             : tx.category
               ? categoryPath(tx.category, categories)
               : null;
+          const transferAmount = isTransfer ? transferAmountDisplay(tx, viewAccountId) : null;
+          const accountLabel = isTransfer && tx.transfer_account_id
+            ? transferDirectionLabel(tx)
+            : tx.account.name;
 
           return (
             <li key={tx.id} className="group flex items-center gap-3 py-3">
@@ -58,8 +104,7 @@ export function TransactionsTable({ items, onEdit, onDelete, onJumpToMonth }: Tr
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium text-text-primary">{tx.description}</span>
                 <span className="block truncate text-xs text-text-muted">
-                  {formatTransactionDate(tx.date, Boolean(onJumpToMonth))} · {tx.account.name}
-                  {isTransfer && tx.transfer_account_id ? ` ${t("transactions.transferSuffix")}` : ""}
+                  {formatTransactionDate(tx.date, Boolean(onJumpToMonth))} · {accountLabel}
                   {categoryLabel ? ` · ${categoryLabel}` : ""}
                   {tx.tags.length > 0 ? ` · ${tx.tags.map((tag) => tag.name).join(", ")}` : ""}
                 </span>
@@ -67,11 +112,16 @@ export function TransactionsTable({ items, onEdit, onDelete, onJumpToMonth }: Tr
 
               <span
                 className={`shrink-0 text-sm font-medium tabular-nums ${
-                  isTransfer ? "text-text-muted" : isExpense ? "text-text-primary" : "text-success"
+                  transferAmount
+                    ? transferAmount.className
+                    : isExpense
+                      ? "text-text-primary"
+                      : "text-success"
                 }`}
               >
-                {isTransfer ? "" : isExpense ? "-" : "+"}
-                {formatCurrency(tx.amount, tx.account.currency)}
+                {transferAmount
+                  ? `${transferAmount.sign}${transferAmount.text}`
+                  : `${isExpense ? "-" : "+"}${formatCurrency(tx.amount, tx.account.currency)}`}
               </span>
 
               <span className="flex shrink-0 gap-1">

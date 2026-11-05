@@ -173,9 +173,89 @@ async def test_merge_transfer_clears_cashback(client: AsyncClient, categories):
     assert body["type"] == "transfer"
     assert body["cashback_category_id"] is None
     assert body["cashback_amount"] is None
+    assert body["transfer_account"] is not None
+    assert body["transfer_account"]["id"] == b["id"]
+    assert body["account"]["id"] == a["id"]
 
     listed = await client.get("/transactions", params={"year": 2026, "month": 5})
     assert listed.json()["total"] == 1
+
+
+async def test_merge_transfer_keeps_both_import_hashes(client: AsyncClient, categories):
+    """Merge of two imported legs must succeed and block re-import of either hash."""
+    a = (await client.post("/accounts", json={"name": "Src", "type": "checking", "currency": "USD"})).json()
+    b = (await client.post("/accounts", json={"name": "Dst", "type": "checking", "currency": "USD"})).json()
+    groceries = categories["Groceries"]["id"]
+    salary = categories["Salary"]["id"]
+    hash_a = "1" * 64
+    hash_b = "2" * 64
+
+    expense = await client.post(
+        "/transactions",
+        json=_txn(
+            a["id"],
+            category_id=groceries,
+            amount="28.00",
+            date="2026-06-01",
+            description="bank out",
+            import_hash=hash_a,
+        ),
+    )
+    income = await client.post(
+        "/transactions",
+        json=_txn(
+            b["id"],
+            type="income",
+            category_id=salary,
+            amount="28.00",
+            date="2026-06-01",
+            description="bank in",
+            import_hash=hash_b,
+        ),
+    )
+    assert expense.status_code == 201, expense.text
+    assert income.status_code == 201, income.text
+
+    merged = await client.post(
+        "/transactions/merge-transfer",
+        json={
+            "source_transaction_id": expense.json()["id"],
+            "destination_transaction_id": income.json()["id"],
+        },
+    )
+    assert merged.status_code == 201, merged.text
+    body = merged.json()
+    assert body["type"] == "transfer"
+    assert body["import_hash"] == hash_a
+    assert body["transfer_account"]["id"] == b["id"]
+
+    reimport = await client.post(
+        "/transactions/bulk",
+        json={
+            "items": [
+                _txn(
+                    a["id"],
+                    category_id=groceries,
+                    amount="28.00",
+                    date="2026-06-01",
+                    description="bank out again",
+                    import_hash=hash_a,
+                ),
+                _txn(
+                    b["id"],
+                    type="income",
+                    category_id=salary,
+                    amount="28.00",
+                    date="2026-06-01",
+                    description="bank in again",
+                    import_hash=hash_b,
+                ),
+            ]
+        },
+    )
+    assert reimport.status_code == 201, reimport.text
+    assert reimport.json()["created"] == 0
+    assert reimport.json()["skipped_duplicates"] == 2
 
 
 async def test_cashback_rates_rejected_for_cash_account(client: AsyncClient):
