@@ -30,6 +30,7 @@ from app.schemas.transaction import (
     split_rule_violation,
     transfer_rule_violation,
 )
+from app.services.cashback_service import resolve_expense_cashback_amount
 from app.services.transaction_domain import (
     attach_import_hash,
     ensure_refund_target,
@@ -267,6 +268,16 @@ async def create_transaction(payload: TransactionCreate, session: AsyncSession =
         )
     fields = payload.model_dump(exclude={"tag_ids", "splits"})
     digest = fields.pop("import_hash", None)
+    if payload.type == TransactionType.EXPENSE:
+        fields["cashback_amount"] = await resolve_expense_cashback_amount(
+            session,
+            account_id=payload.account_id,
+            cashback_category_id=payload.cashback_category_id,
+            amount=payload.amount,
+            tx_date=fields["date"],
+            explicit_amount=payload.cashback_amount,
+            amount_provided=payload.cashback_amount is not None,
+        )
     transaction = Transaction(**fields)
     attach_import_hash(transaction, payload.account_id, digest)
     transaction.tags = await _resolve_tags(session, payload.tag_ids)
@@ -333,6 +344,16 @@ async def bulk_create_transactions(
             seen_in_batch.add(key)
         fields = item.model_dump(exclude={"tag_ids", "splits"})
         digest = fields.pop("import_hash", None)
+        if item.type == TransactionType.EXPENSE:
+            fields["cashback_amount"] = await resolve_expense_cashback_amount(
+                session,
+                account_id=item.account_id,
+                cashback_category_id=item.cashback_category_id,
+                amount=item.amount,
+                tx_date=fields["date"],
+                explicit_amount=item.cashback_amount,
+                amount_provided=item.cashback_amount is not None,
+            )
         transaction = Transaction(**fields)
         attach_import_hash(transaction, item.account_id, digest)
         transaction.tags = await _resolve_tags(session, item.tag_ids)
@@ -401,6 +422,42 @@ async def update_transaction(
     )
     if refund_violation:
         raise HTTPException(status_code=400, detail=refund_violation)
+
+    if effective_type == TransactionType.TRANSFER:
+        # Becoming a transfer always clears cashback (merge path does the same).
+        updates["cashback_category_id"] = None
+        updates["cashback_amount"] = None
+        updates["is_cashback"] = False
+        effective_cashback_category_id = None
+        effective_cashback_amount = None
+        effective_is_cashback = False
+        if updates.get("transfer_amount", transaction.transfer_amount) is None and "transfer_amount" not in updates:
+            updates["transfer_amount"] = effective_amount
+    elif effective_type == TransactionType.EXPENSE:
+        amount_provided = "cashback_amount" in updates
+        should_recompute = not amount_provided and (
+            "cashback_category_id" in updates
+            or "amount" in updates
+            or "account_id" in updates
+            or "date" in updates
+            or "occurred_at" in updates
+        )
+        if amount_provided or should_recompute or (
+            effective_cashback_category_id is not None and transaction.cashback_amount is None
+        ):
+            tx_date = updates.get("date", transaction.date)
+            resolved = await resolve_expense_cashback_amount(
+                session,
+                account_id=effective_account_id,
+                cashback_category_id=effective_cashback_category_id,
+                amount=effective_amount,
+                tx_date=tx_date,
+                explicit_amount=updates.get("cashback_amount") if amount_provided else None,
+                amount_provided=amount_provided,
+            )
+            updates["cashback_amount"] = resolved
+            effective_cashback_amount = resolved
+
     cashback_violation = cashback_rule_violation(
         type=effective_type,
         cashback_category_id=effective_cashback_category_id,
@@ -410,13 +467,6 @@ async def update_transaction(
     if cashback_violation:
         raise HTTPException(status_code=400, detail=cashback_violation)
 
-    if effective_type == TransactionType.TRANSFER:
-        # Becoming a transfer always clears cashback (merge path does the same).
-        updates["cashback_category_id"] = None
-        updates["cashback_amount"] = None
-        updates["is_cashback"] = False
-        if updates.get("transfer_amount", transaction.transfer_amount) is None and "transfer_amount" not in updates:
-            updates["transfer_amount"] = effective_amount
     if effective_type == TransactionType.REFUND:
         await ensure_refund_target(
             session,

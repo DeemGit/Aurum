@@ -2,6 +2,7 @@ export type AccountType = "checking" | "debit_card" | "savings" | "credit_card" 
 export type CategoryKind = "income" | "expense";
 export type TransactionType = "income" | "expense" | "transfer" | "refund";
 export type RecurringFrequency = "weekly" | "monthly" | "yearly";
+export type CashbackRounding = "percent_floor" | "base_100";
 
 export interface Account {
   id: number;
@@ -10,6 +11,7 @@ export interface Account {
   currency: string;
   color: string | null;
   is_archived: boolean;
+  cashback_rounding: CashbackRounding;
 }
 
 // The Accounts management page's shape — /api/accounts' own endpoints add a
@@ -25,6 +27,7 @@ export interface AccountInput {
   name: string;
   type: AccountType;
   currency: string;
+  cashback_rounding?: CashbackRounding;
 }
 
 export interface Category {

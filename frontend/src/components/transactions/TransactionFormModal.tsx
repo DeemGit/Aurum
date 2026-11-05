@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { Dialog } from "@/components/ui/Dialog";
 import { Button } from "@/components/ui/Button";
@@ -12,6 +13,8 @@ import {
   useTransferMatches,
   useUpdateTransaction,
 } from "@/hooks/useTransactions";
+import { fetchAccountCashbackRates, fetchCashbackCategories } from "@/api/cashback";
+import { computeCashbackAmount } from "@/lib/cashback";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { buildHierarchicalCategories, translateCategoryName } from "@/lib/categoryLabels";
 import { formatCurrency, formatDeltaSeconds, formatOccurredAt, formatTransactionDate } from "@/lib/format";
@@ -39,6 +42,7 @@ const EMPTY_FORM = {
   transfer_amount: "",
   exchange_rate: "",
   fee_amount: "0",
+  cashback_category_id: "",
   cashback_amount: "",
   description: "",
   merchant: "",
@@ -96,10 +100,30 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
   const [splitRows, setSplitRows] = useState<SplitRowState[]>([emptySplitRow(), emptySplitRow()]);
   const [error, setError] = useState<string | null>(null);
   const [previewCandidate, setPreviewCandidate] = useState<MergeCandidate | null>(null);
+  const [cashbackAmountTouched, setCashbackAmountTouched] = useState(false);
+
+  const cashbackCategoriesQuery = useQuery({
+    queryKey: ["cashback-categories"],
+    queryFn: fetchCashbackCategories,
+    enabled: open && (form.type === "expense" || form.type === "refund"),
+  });
+  const cashbackYear = form.date ? Number(form.date.slice(0, 4)) : new Date().getFullYear();
+  const cashbackMonth = form.date ? Number(form.date.slice(5, 7)) : new Date().getMonth() + 1;
+  const cashbackRatesQuery = useQuery({
+    queryKey: ["cashback-rates", form.account_id, cashbackYear, cashbackMonth],
+    queryFn: () => fetchAccountCashbackRates(Number(form.account_id), cashbackYear, cashbackMonth),
+    enabled: open && Boolean(form.account_id) && (form.type === "expense" || form.type === "refund"),
+  });
+
+  const selectedAccount = useMemo(
+    () => accounts?.find((account) => String(account.id) === form.account_id) ?? null,
+    [accounts, form.account_id]
+  );
 
   useEffect(() => {
     if (!open) {
       setPreviewCandidate(null);
+      setCashbackAmountTouched(false);
       return;
     }
     if (transaction) {
@@ -132,6 +156,7 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
         transfer_amount: transaction.transfer_amount ?? "",
         exchange_rate: transaction.exchange_rate ?? "",
         fee_amount: transaction.fee_amount ?? "0",
+        cashback_category_id: transaction.cashback_category_id ? String(transaction.cashback_category_id) : "",
         cashback_amount: transaction.cashback_amount ?? "",
         description: transaction.description,
         merchant: transaction.merchant ?? "",
@@ -151,14 +176,48 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
             }))
           : [emptySplitRow(), emptySplitRow()]
       );
+      // Keep stored cashback until the user changes the cashback category.
+      setCashbackAmountTouched(true);
     } else {
       setForm({ ...EMPTY_FORM, account_id: accounts?.[0] ? String(accounts[0].id) : "" });
       setTags([]);
       setSplitMode(false);
       setSplitRows([emptySplitRow(), emptySplitRow()]);
+      setCashbackAmountTouched(false);
     }
     setError(null);
   }, [open, transaction, accounts]);
+
+  useEffect(() => {
+    if (!open || cashbackAmountTouched) return;
+    if (form.type !== "expense" && form.type !== "refund") return;
+    if (!form.cashback_category_id || !form.amount || !selectedAccount) {
+      if (!form.cashback_category_id && form.cashback_amount !== "") {
+        setForm((prev) => ({ ...prev, cashback_amount: "" }));
+      }
+      return;
+    }
+    const rate = cashbackRatesQuery.data?.find(
+      (row) => String(row.cashback_category_id) === form.cashback_category_id
+    );
+    const percent = rate ? Number(rate.percent) : 0;
+    const computed = computeCashbackAmount(Number(form.amount), percent, selectedAccount.cashback_rounding);
+    const next = String(computed);
+    if (form.cashback_amount !== next) {
+      setForm((prev) => ({ ...prev, cashback_amount: next }));
+    }
+  }, [
+    open,
+    cashbackAmountTouched,
+    form.type,
+    form.cashback_category_id,
+    form.amount,
+    form.cashback_amount,
+    form.account_id,
+    form.date,
+    selectedAccount,
+    cashbackRatesQuery.data,
+  ]);
 
   const kindCategories = (categories ?? []).filter((category) =>
     form.type === "income" ? category.kind === "income" : category.kind === "expense"
@@ -284,7 +343,16 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
       transfer_amount: form.type === "transfer" && form.transfer_amount ? form.transfer_amount : null,
       exchange_rate: form.type === "transfer" && form.exchange_rate ? form.exchange_rate : null,
       fee_amount: form.type === "transfer" ? form.fee_amount || "0" : "0",
-      cashback_amount: form.type === "refund" && form.cashback_amount !== "" ? form.cashback_amount : null,
+      cashback_category_id:
+        form.type === "expense" || form.type === "refund"
+          ? form.cashback_category_id
+            ? Number(form.cashback_category_id)
+            : null
+          : null,
+      cashback_amount:
+        (form.type === "expense" || form.type === "refund") && form.cashback_amount !== ""
+          ? form.cashback_amount
+          : null,
       description: form.description,
       merchant: form.merchant || null,
       notes: form.notes || null,
@@ -407,26 +475,54 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
         )}
 
         {form.type === "refund" && (
+          <div>
+            <Label htmlFor="refund_of">{t("transactions.form.refundOfLabel")}</Label>
+            <Input
+              id="refund_of"
+              type="number"
+              required
+              min="1"
+              value={form.refund_of_transaction_id}
+              onChange={(event) => setForm((prev) => ({ ...prev, refund_of_transaction_id: event.target.value }))}
+            />
+          </div>
+        )}
+
+        {(form.type === "expense" || form.type === "refund") && selectedAccount?.type !== "cash" && (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
-              <Label htmlFor="refund_of">{t("transactions.form.refundOfLabel")}</Label>
-              <Input
-                id="refund_of"
-                type="number"
-                required
-                min="1"
-                value={form.refund_of_transaction_id}
-                onChange={(event) => setForm((prev) => ({ ...prev, refund_of_transaction_id: event.target.value }))}
-              />
+              <Label htmlFor="cashback_category">{t("transactions.form.cashbackCategoryLabel")}</Label>
+              <Select
+                id="cashback_category"
+                value={form.cashback_category_id}
+                onChange={(event) => {
+                  setCashbackAmountTouched(false);
+                  setForm((prev) => ({ ...prev, cashback_category_id: event.target.value }));
+                }}
+              >
+                <option value="">{t("transactions.form.cashbackCategoryNone")}</option>
+                {(cashbackCategoriesQuery.data ?? []).map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </Select>
             </div>
             <div>
-              <Label htmlFor="cashback_amount">{t("transactions.form.cashbackAmountLabel")}</Label>
+              <Label htmlFor="cashback_amount">
+                {form.type === "refund"
+                  ? t("transactions.form.cashbackAmountLabel")
+                  : t("transactions.form.cashbackAmountExpenseLabel")}
+              </Label>
               <Input
                 id="cashback_amount"
                 type="number"
                 step="0.01"
                 value={form.cashback_amount}
-                onChange={(event) => setForm((prev) => ({ ...prev, cashback_amount: event.target.value }))}
+                onChange={(event) => {
+                  setCashbackAmountTouched(true);
+                  setForm((prev) => ({ ...prev, cashback_amount: event.target.value }));
+                }}
               />
             </div>
           </div>

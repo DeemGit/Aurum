@@ -50,6 +50,7 @@ def _to_read(account: Account, balance: Decimal) -> AccountWithBalance:
         currency=account.currency,
         color=account.color,
         is_archived=account.is_archived,
+        cashback_rounding=account.cashback_rounding,
         balance=balance,
     )
 

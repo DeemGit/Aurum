@@ -84,7 +84,12 @@ Merge → одна transfer-строка; две старые удаляются
 
 - `cashback_categories` — банковские градации
 - `account_cashback_rates` — `(account_id, year, month, cashback_category_id, percent)`
-- Expense: optional `cashback_category_id` → expected = amount × %
+- `accounts.cashback_rounding`:
+  - `percent_floor` — `floor(amount × % / 100)` (Т-Банк: 950@5% → 47)
+  - `base_100` — `floor(floor(amount/100) × %)` (950@6% → 54)
+- Expense: optional `cashback_category_id` → авто `cashback_amount` (целое);
+  сумма хранится и правится вручную до 0.01
+- Отчёт expected = сумма stored `cashback_amount` по expense
 - Actual: income с `is_cashback=true` + `cashback_amount` на refund (со знаком)
 - Счета `cash`: тарифы запрещены
 

@@ -268,6 +268,84 @@ async def test_cashback_rates_rejected_for_cash_account(client: AsyncClient):
     assert resp.status_code == 400
 
 
+async def test_expense_cashback_auto_and_override(client: AsyncClient, categories):
+    from decimal import Decimal
+
+    from app.models.enums import CashbackRounding
+    from app.services.cashback_service import compute_cashback_amount
+
+    assert compute_cashback_amount(Decimal("950"), Decimal("5"), CashbackRounding.PERCENT_FLOOR) == Decimal("47")
+    assert compute_cashback_amount(Decimal("950"), Decimal("6"), CashbackRounding.BASE_100) == Decimal("54")
+
+    account = (
+        await client.post("/accounts", json={"name": "Card", "type": "debit_card", "currency": "RUB"})
+    ).json()
+    assert account["cashback_rounding"] == "percent_floor"
+    patched = await client.patch(f"/accounts/{account['id']}", json={"cashback_rounding": "percent_floor"})
+    assert patched.status_code == 200
+
+    cat = (await client.post("/cashback-categories", json={"name": "Travel"})).json()
+    rates = await client.put(
+        f"/accounts/{account['id']}/cashback-rates",
+        json={"year": 2026, "month": 7, "rates": [{"cashback_category_id": cat["id"], "percent": "5"}]},
+    )
+    assert rates.status_code == 200
+
+    groceries = categories["Groceries"]["id"]
+    auto = await client.post(
+        "/transactions",
+        json=_txn(
+            account["id"],
+            category_id=groceries,
+            amount="950.00",
+            date="2026-07-10",
+            description="auto cb",
+            cashback_category_id=cat["id"],
+        ),
+    )
+    assert auto.status_code == 201, auto.text
+    assert money(auto.json()["cashback_amount"]) == Decimal("47")
+
+    override = await client.post(
+        "/transactions",
+        json=_txn(
+            account["id"],
+            category_id=groceries,
+            amount="950.00",
+            date="2026-07-11",
+            description="manual cb",
+            cashback_category_id=cat["id"],
+            cashback_amount="12.34",
+        ),
+    )
+    assert override.status_code == 201, override.text
+    assert money(override.json()["cashback_amount"]) == Decimal("12.34")
+
+    report = (
+        await client.get("/reports/cashback", params={"year": 2026, "month": 7, "account_id": account["id"]})
+    ).json()
+    assert money(report["expected_total"]) == Decimal("59.34")
+
+    await client.patch(f"/accounts/{account['id']}", json={"cashback_rounding": "base_100"})
+    await client.put(
+        f"/accounts/{account['id']}/cashback-rates",
+        json={"year": 2026, "month": 8, "rates": [{"cashback_category_id": cat["id"], "percent": "6"}]},
+    )
+    base = await client.post(
+        "/transactions",
+        json=_txn(
+            account["id"],
+            category_id=groceries,
+            amount="950.00",
+            date="2026-08-01",
+            description="base100",
+            cashback_category_id=cat["id"],
+        ),
+    )
+    assert base.status_code == 201, base.text
+    assert money(base.json()["cashback_amount"]) == Decimal("54")
+
+
 async def test_filter_transactions_by_account(client: AsyncClient, account_id, categories):
     other = (await client.post("/accounts", json={"name": "Other", "type": "checking", "currency": "USD"})).json()
     groceries = categories["Groceries"]["id"]

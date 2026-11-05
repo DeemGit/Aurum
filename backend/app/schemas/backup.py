@@ -9,6 +9,7 @@ from app.models.enums import (
     AccountType,
     AssetClass,
     CapitalRole,
+    CashbackRounding,
     CategoryKind,
     CryptoTransactionType,
     RecurringFrequency,
@@ -26,6 +27,8 @@ class AccountBackup(BaseModel):
     currency: str
     color: str | None
     is_archived: bool
+    # Defaulted so backups from before cashback_rounding still restore.
+    cashback_rounding: CashbackRounding = CashbackRounding.PERCENT_FLOOR
 
 
 class CategoryBackup(BaseModel):

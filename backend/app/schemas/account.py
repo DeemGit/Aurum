@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.enums import AccountType
+from app.models.enums import AccountType, CashbackRounding
 
 
 class AccountBase(BaseModel):
@@ -10,6 +10,7 @@ class AccountBase(BaseModel):
     type: AccountType = AccountType.CHECKING
     currency: str = Field(default="USD", min_length=3, max_length=3)
     color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    cashback_rounding: CashbackRounding = CashbackRounding.PERCENT_FLOOR
 
 
 class AccountCreate(AccountBase):
@@ -22,6 +23,7 @@ class AccountUpdate(BaseModel):
     type: AccountType | None = None
     color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     is_archived: bool | None = None
+    cashback_rounding: CashbackRounding | None = None
 
 
 class AccountRead(AccountBase):

@@ -9,7 +9,10 @@ export function createAccount(input: AccountInput) {
   return api.post<AccountWithBalance>("/accounts", input);
 }
 
-export function updateAccount(id: number, input: Partial<AccountInput> & { is_archived?: boolean }) {
+export function updateAccount(
+  id: number,
+  input: Partial<AccountInput> & { is_archived?: boolean; cashback_rounding?: AccountInput["cashback_rounding"] }
+) {
   return api.patch<AccountWithBalance>(`/accounts/${id}`, input);
 }
 

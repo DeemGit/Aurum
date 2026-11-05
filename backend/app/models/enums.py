@@ -68,3 +68,14 @@ class RiskLevel(str, enum.Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+
+
+class CashbackRounding(str, enum.Enum):
+    """How expected cashback is derived from amount × rate on an account.
+
+    percent_floor — floor(amount * percent / 100), e.g. T-Bank 950 @ 5% → 47
+    base_100 — floor(floor(amount / 100) * percent), e.g. 950 @ 6% → 54
+    """
+
+    PERCENT_FLOOR = "percent_floor"
+    BASE_100 = "base_100"

@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Label, Select } from "@/components/ui/Input";
 import { MonthSelector } from "@/components/layout/MonthSelector";
-import { useAccounts } from "@/hooks/useAccounts";
+import { useAccounts, useUpdateAccount } from "@/hooks/useAccounts";
 import {
   copyAccountCashbackRates,
   createCashbackCategory,
@@ -15,7 +15,8 @@ import {
   upsertAccountCashbackRates,
 } from "@/api/cashback";
 import { formatCurrency } from "@/lib/format";
-import { useTranslation } from "@/lib/i18n";
+import { useTranslation, type TranslationKey } from "@/lib/i18n";
+import type { CashbackRounding } from "@/types";
 
 export function CashbackPage() {
   const { t } = useTranslation();
@@ -26,10 +27,15 @@ export function CashbackPage() {
   const [newCategoryName, setNewCategoryName] = useState("");
   const queryClient = useQueryClient();
   const { data: accounts } = useAccounts();
+  const updateAccount = useUpdateAccount();
 
   const nonCashAccounts = useMemo(
     () => (accounts ?? []).filter((account) => account.type !== "cash"),
     [accounts]
+  );
+  const selectedAccount = useMemo(
+    () => nonCashAccounts.find((account) => String(account.id) === accountId) ?? null,
+    [nonCashAccounts, accountId]
   );
 
   const categoriesQuery = useQuery({
@@ -143,6 +149,31 @@ export function CashbackPage() {
               ))}
             </ul>
           </div>
+
+          {accountId && selectedAccount && (
+            <div className="space-y-2">
+              <Label htmlFor="cb-rounding">{t("cashback.roundingLabel")}</Label>
+              <Select
+                id="cb-rounding"
+                value={selectedAccount.cashback_rounding}
+                disabled={updateAccount.isPending}
+                onChange={(event) =>
+                  updateAccount.mutate({
+                    id: selectedAccount.id,
+                    input: { cashback_rounding: event.target.value as CashbackRounding },
+                  })
+                }
+                className="sm:w-72"
+              >
+                {(["percent_floor", "base_100"] as CashbackRounding[]).map((mode) => (
+                  <option key={mode} value={mode}>
+                    {t(`cashback.rounding.${mode}` as TranslationKey)}
+                  </option>
+                ))}
+              </Select>
+              <p className="text-xs text-text-muted">{t("cashback.roundingHint")}</p>
+            </div>
+          )}
 
           {accountId && (
             <div className="space-y-2">

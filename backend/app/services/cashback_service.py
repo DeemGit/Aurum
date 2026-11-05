@@ -4,7 +4,7 @@ vs actual cashback report.
 import calendar
 from collections import defaultdict
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_FLOOR
 
 from fastapi import HTTPException
 from sqlalchemy import delete, select
@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.account import Account
 from app.models.cashback import AccountCashbackRate, CashbackCategory
-from app.models.enums import AccountType, TransactionType
+from app.models.enums import AccountType, CashbackRounding, TransactionType
 from app.models.transaction import Transaction
 from app.schemas.cashback import (
     AccountCashbackRatesCopy,
@@ -28,6 +28,54 @@ from app.schemas.cashback import (
 def _reject_cash_account(account: Account) -> None:
     if account.type == AccountType.CASH:
         raise HTTPException(status_code=400, detail="Cash accounts do not support cashback rates")
+
+
+def compute_cashback_amount(
+    amount: Decimal, percent: Decimal, rounding: CashbackRounding
+) -> Decimal:
+    """Auto cashback is always a whole number; callers may later override to cents."""
+    if percent <= 0 or amount <= 0:
+        return Decimal("0")
+    if rounding == CashbackRounding.BASE_100:
+        hundreds = (amount / Decimal("100")).to_integral_value(rounding=ROUND_FLOOR)
+        raw = hundreds * percent
+    else:
+        # percent_floor (default): floor(amount * percent / 100)
+        raw = amount * percent / Decimal("100")
+    return raw.to_integral_value(rounding=ROUND_FLOOR)
+
+
+async def resolve_expense_cashback_amount(
+    session: AsyncSession,
+    *,
+    account_id: int,
+    cashback_category_id: int | None,
+    amount: Decimal,
+    tx_date: date,
+    explicit_amount: Decimal | None,
+    amount_provided: bool,
+) -> Decimal | None:
+    """If the client sent cashback_amount, keep it. Otherwise derive from rates."""
+    if amount_provided:
+        return explicit_amount
+    if cashback_category_id is None:
+        return None
+    account = await session.get(Account, account_id)
+    if account is None or account.type == AccountType.CASH:
+        return Decimal("0")
+    rate = (
+        await session.execute(
+            select(AccountCashbackRate.percent).where(
+                AccountCashbackRate.account_id == account_id,
+                AccountCashbackRate.year == tx_date.year,
+                AccountCashbackRate.month == tx_date.month,
+                AccountCashbackRate.cashback_category_id == cashback_category_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if rate is None:
+        return Decimal("0")
+    return compute_cashback_amount(amount, rate, account.cashback_rounding)
 
 
 async def list_cashback_categories(session: AsyncSession) -> list[CashbackCategory]:
@@ -160,22 +208,11 @@ async def get_cashback_report(
         expenses_stmt = expenses_stmt.where(Transaction.account_id == account_id)
     expenses = list((await session.execute(expenses_stmt)).scalars().all())
 
-    rates_stmt = select(AccountCashbackRate).where(
-        AccountCashbackRate.year == year, AccountCashbackRate.month == month
-    )
-    if account_id is not None:
-        rates_stmt = rates_stmt.where(AccountCashbackRate.account_id == account_id)
-    rates = list((await session.execute(rates_stmt)).scalars().all())
-    rate_map: dict[tuple[int, int], Decimal] = {
-        (r.account_id, r.cashback_category_id): r.percent for r in rates
-    }
-
+    # Expected uses the stored per-expense cashback_amount (auto or manual),
+    # not a live recompute — so hand edits show up in the report.
     expected_by_cat: dict[int | None, Decimal] = defaultdict(Decimal)
     for expense in expenses:
-        percent = rate_map.get((expense.account_id, expense.cashback_category_id), Decimal("0"))
-        expected_by_cat[expense.cashback_category_id] += (expense.amount * percent / Decimal("100")).quantize(
-            Decimal("0.01")
-        )
+        expected_by_cat[expense.cashback_category_id] += expense.cashback_amount or Decimal("0")
 
     income_stmt = select(Transaction).where(
         Transaction.type == TransactionType.INCOME,

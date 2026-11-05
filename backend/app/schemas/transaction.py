@@ -83,9 +83,7 @@ def cashback_rule_violation(
         return "cashback_category_id is not valid for income transactions"
     if type not in (TransactionType.REFUND, TransactionType.EXPENSE) and cashback_amount is not None:
         if type != TransactionType.INCOME:
-            return "cashback_amount is only valid for refund (or omitted) transactions"
-    if type == TransactionType.EXPENSE and cashback_amount is not None:
-        return "cashback_amount is not set on expense — use cashback_category_id and monthly rates"
+            return "cashback_amount is only valid for expense or refund transactions"
     if type == TransactionType.INCOME and cashback_amount is not None:
         return "cashback_amount is not valid for income — use is_cashback"
     return None

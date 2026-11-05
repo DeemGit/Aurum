@@ -3,7 +3,7 @@ from sqlalchemy import Boolean, Enum, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.models.enums import AccountType
+from app.models.enums import AccountType, CashbackRounding
 from app.models.mixins import TimestampMixin
 
 
@@ -21,6 +21,12 @@ class Account(Base, TimestampMixin):
     # Hex color used for account-scoped UI accents (e.g. transaction list avatars).
     color: Mapped[str | None] = mapped_column(String(7), nullable=True)
     is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # How auto cashback on expenses is rounded for this account's bank rules.
+    cashback_rounding: Mapped[CashbackRounding] = mapped_column(
+        Enum(CashbackRounding, name="cashback_rounding", native_enum=False, length=20),
+        nullable=False,
+        default=CashbackRounding.PERCENT_FLOOR,
+    )
 
     transactions: Mapped[list["Transaction"]] = relationship(
         back_populates="account",

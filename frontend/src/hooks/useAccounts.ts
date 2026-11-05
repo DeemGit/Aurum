@@ -17,8 +17,13 @@ export function useCreateAccount() {
 export function useUpdateAccount() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, input }: { id: number; input: Partial<AccountInput> & { is_archived?: boolean } }) =>
-      updateAccount(id, input),
+    mutationFn: ({
+      id,
+      input,
+    }: {
+      id: number;
+      input: Partial<AccountInput> & { is_archived?: boolean; cashback_rounding?: AccountInput["cashback_rounding"] };
+    }) => updateAccount(id, input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["accounts"] }),
   });
 }
