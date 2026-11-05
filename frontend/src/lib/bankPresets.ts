@@ -82,7 +82,14 @@ export const BANK_PRESETS: readonly BankPreset[] = [
     },
     dateFormat: "DD.MM.YYYY",
     amountFormat: "comma-decimal",
-    rowFilter: { column: ["статус"], accept: (value) => value.trim().toUpperCase() === "OK" },
+    // Real exports use Cyrillic «Ок»; older samples used Latin "OK".
+    rowFilter: {
+      column: ["статус"],
+      accept: (value) => {
+        const status = value.trim().toUpperCase();
+        return status === "OK" || status === "ОК";
+      },
+    },
   },
   {
     // App → card → Виписка → CSV, Ukrainian UI language. Comma-separated,

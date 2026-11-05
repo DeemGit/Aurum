@@ -8,7 +8,8 @@ const EMPTY: ImportMapping = { date: "", amount: "", description: "", merchant: 
 // lib/bankPresets.ts for where each export comes from).
 const TBANK_CSV = [
   '"Имя счёта";"Номер карты";"Дата операции";"Сумма операции";"Валюта операции";"Сумма в валюте счёта";"Валюта счёта";"Статус";"Категория по-умолчанию";"Ваша категория";"MCC";"Описание";"Сообщение";"Округление";"Сумма операции с округлением";"Бонусы (включая кэшбэк)";"Учёт в аналитике"',
-  '"Black";"*8305";"24.10.2018 17:04:25";"-882,04";"RUB";"-882,04";"RUB";"OK";"Переводы";"Переводы";"";"Пополнение счета Тинькофф Брокер";"комментарий";"0,00";"-882,04";"0,00";"Да"',
+  // Status «Ок» is what current T-Bank exports use (Cyrillic); Latin OK still accepted.
+  '"Black";"*8305";"24.10.2018 17:04:25";"-882,04";"RUB";"-882,04";"RUB";"Ок";"Переводы";"Переводы";"";"Пополнение счета Тинькофф Брокер";"комментарий";"0,00";"-882,04";"0,00";"Да"',
   '"Black";"*8305";"25.10.2018 09:12:00";"-1500,00";"RUB";"-1500,00";"RUB";"FAILED";"Супермаркеты";"Супермаркеты";"5411";"Пятёрочка";"";"";"-1500,00";"0,00";"Да"',
 ].join("\n");
 
@@ -70,11 +71,16 @@ describe("applyPresetMapping", () => {
 });
 
 describe("rowFilterRejection", () => {
-  it("drops T-Bank rows whose status is not OK and reports the status", () => {
-    const [headers, ok, failed] = parseCsv(TBANK_CSV);
+  it("keeps Cyrillic Ок and Latin OK, drops FAILED", () => {
+    const [headers, okCyrillic, failed] = parseCsv(TBANK_CSV);
     const preset = findPreset("tbank")!;
-    expect(rowFilterRejection(preset, headers, ok)).toBeNull();
+    expect(rowFilterRejection(preset, headers, okCyrillic)).toBeNull();
     expect(rowFilterRejection(preset, headers, failed)).toBe("FAILED");
+
+    const okLatin = [...okCyrillic];
+    const statusIdx = headers.indexOf("Статус");
+    okLatin[statusIdx] = "OK";
+    expect(rowFilterRejection(preset, headers, okLatin)).toBeNull();
   });
 
   it("keeps everything when the preset has no filter or the column is absent", () => {
