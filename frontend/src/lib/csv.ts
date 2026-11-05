@@ -72,8 +72,27 @@ const DATE_PATTERNS: Record<DateFormat, { regex: RegExp; order: ["y" | "m" | "d"
 
 export interface ParsedDateTime {
   date: string;
-  /** ISO timestamptz when the bank row included a time; otherwise midnight UTC. */
+  /** ISO timestamptz: bank/wall-clock time tagged with the browser's local offset. */
   occurred_at: string;
+}
+
+/** Browser local UTC offset as `±HH:MM` (e.g. `+03:00`). Bank CSV times are
+ * local wall clocks, not UTC — tagging them +00:00 shifted display by TZ. */
+export function localOffsetSuffix(at: Date = new Date()): string {
+  const minutes = -at.getTimezoneOffset();
+  const sign = minutes >= 0 ? "+" : "-";
+  const abs = Math.abs(minutes);
+  const hh = String(Math.floor(abs / 60)).padStart(2, "0");
+  const mm = String(abs % 60).padStart(2, "0");
+  return `${sign}${hh}:${mm}`;
+}
+
+/** Build `YYYY-MM-DDTHH:MM:SS±HH:MM` for the given calendar date and clock time. */
+export function toOccurredAtIso(dateIso: string, timeHHmm: string, at: Date = new Date()): string {
+  const [hours = "00", minutes = "00"] = (timeHHmm || "00:00").split(":");
+  const hh = String(Number(hours)).padStart(2, "0");
+  const mm = String(Number(minutes)).padStart(2, "0");
+  return `${dateIso}T${hh}:${mm}:00${localOffsetSuffix(at)}`;
 }
 
 /** Parses `raw` per `format`, returning calendar date + occurred_at, or null
@@ -100,7 +119,9 @@ export function parseDateTimeWithFormat(raw: string, format: DateFormat): Parsed
   const hh = timeMatch ? String(Number(timeMatch[1])).padStart(2, "0") : "00";
   const mm = timeMatch ? timeMatch[2] : "00";
   const ss = timeMatch?.[3] ? timeMatch[3] : "00";
-  return { date: dateIso, occurred_at: `${dateIso}T${hh}:${mm}:${ss}+00:00` };
+  // Tag with the local offset for *this* wall clock (bank times are local).
+  const offsetAt = new Date(year, month - 1, day, Number(hh), Number(mm), Number(ss));
+  return { date: dateIso, occurred_at: `${dateIso}T${hh}:${mm}:${ss}${localOffsetSuffix(offsetAt)}` };
 }
 
 /** Parses `raw` per `format`, returning an ISO "YYYY-MM-DD" string, or null. */

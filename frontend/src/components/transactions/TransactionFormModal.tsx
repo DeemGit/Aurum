@@ -17,6 +17,7 @@ import { fetchAccountCashbackRates, fetchCashbackCategories } from "@/api/cashba
 import { computeCashbackAmount } from "@/lib/cashback";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { buildHierarchicalCategories, translateCategoryName } from "@/lib/categoryLabels";
+import { toOccurredAtIso } from "@/lib/csv";
 import { formatCurrency, formatDeltaSeconds, formatOccurredAt, formatTransactionDate } from "@/lib/format";
 import type { Tag, Transaction, TransactionInput, TransactionSplitInput, TransactionType } from "@/types";
 
@@ -136,7 +137,7 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
       const baseCategory = hasSplits ? transaction.splits.find((split) => split.category)?.category : null;
       const occurred = transaction.occurred_at ? new Date(transaction.occurred_at) : null;
       const time = occurred
-        ? `${String(occurred.getUTCHours()).padStart(2, "0")}:${String(occurred.getUTCMinutes()).padStart(2, "0")}`
+        ? `${String(occurred.getHours()).padStart(2, "0")}:${String(occurred.getMinutes()).padStart(2, "0")}`
         : "00:00";
       setForm({
         type: transaction.type,
@@ -338,7 +339,7 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
       splits = [];
     }
 
-    const occurred_at = `${form.date}T${form.time || "00:00"}:00+00:00`;
+    const occurred_at = toOccurredAtIso(form.date, form.time || "00:00");
     const payload: TransactionInput = {
       type: form.type,
       account_id: Number(form.account_id),

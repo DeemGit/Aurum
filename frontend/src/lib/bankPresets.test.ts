@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { applyPresetMapping, detectPreset, findPreset, normalizeHeader, rowFilterRejection, type ImportMapping } from "@/lib/bankPresets";
-import { parseAmount, parseCsv, parseDateWithFormat } from "@/lib/csv";
+import {
+  localOffsetSuffix,
+  parseAmount,
+  parseCsv,
+  parseDateTimeWithFormat,
+  parseDateWithFormat,
+  toOccurredAtIso,
+} from "@/lib/csv";
 
 const EMPTY: ImportMapping = { date: "", amount: "", description: "", merchant: "", notes: "", category: "" };
 
@@ -128,5 +135,32 @@ describe("parseDateWithFormat with a time suffix", () => {
   it("still rejects trailing garbage that isn't a time", () => {
     expect(parseDateWithFormat("05.01.2024 abc", "DD.MM.YYYY")).toBeNull();
     expect(parseDateWithFormat("05.01.2024 09", "DD.MM.YYYY")).toBeNull();
+  });
+});
+
+describe("parseDateTimeWithFormat local offset", () => {
+  it("tags bank wall-clock with the browser offset, not hard-coded +00:00", () => {
+    const parsed = parseDateTimeWithFormat("05.11.2026 16:14:01", "DD.MM.YYYY");
+    expect(parsed).not.toBeNull();
+    expect(parsed!.date).toBe("2026-11-05");
+    expect(parsed!.occurred_at).toMatch(/^2026-11-05T16:14:01[+-]\d{2}:\d{2}$/);
+    // Must match browser offset for that wall clock — never a hard-coded UTC tag.
+    expect(parsed!.occurred_at).toBe(
+      `2026-11-05T16:14:01${localOffsetSuffix(new Date(2026, 10, 5, 16, 14, 1))}`,
+    );
+  });
+
+  it("uses midnight local when the CSV row has no time", () => {
+    const parsed = parseDateTimeWithFormat("05.11.2026", "DD.MM.YYYY");
+    expect(parsed!.occurred_at).toBe(
+      `2026-11-05T00:00:00${localOffsetSuffix(new Date(2026, 10, 5, 0, 0, 0))}`,
+    );
+  });
+
+  it("toOccurredAtIso builds the same local-offset form", () => {
+    const at = new Date(2026, 10, 5, 16, 14, 0);
+    expect(toOccurredAtIso("2026-11-05", "16:14", at)).toBe(
+      `2026-11-05T16:14:00${localOffsetSuffix(at)}`,
+    );
   });
 });

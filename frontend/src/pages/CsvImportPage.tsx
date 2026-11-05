@@ -25,6 +25,7 @@ import {
   parseCsv,
   parseDateTimeWithFormat,
   parseDateWithFormat,
+  toOccurredAtIso,
   transactionDedupeKey,
   type AmountFormat,
   type DateFormat,
@@ -360,7 +361,7 @@ export function CsvImportPage() {
       const presetId = activePreset?.id;
       const withHashes: TransactionInput[] = [];
       for (const item of valid) {
-        const occurredAt = item.occurred_at ?? `${item.date}T00:00:00+00:00`;
+        const occurredAt = item.occurred_at ?? toOccurredAtIso(item.date!, "00:00");
         const import_hash = await computeImportHash({
           accountId: item.account_id,
           date: item.date ?? occurredAt.slice(0, 10),
