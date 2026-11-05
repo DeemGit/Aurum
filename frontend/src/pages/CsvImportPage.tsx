@@ -291,7 +291,7 @@ export function CsvImportPage() {
         occurred_at: parsedDate.occurred_at,
       };
 
-      const key = transactionDedupeKey(candidate.date, candidate.type, candidate.amount, candidate.description);
+      const key = transactionDedupeKey(parsedDate.date, candidate.type, candidate.amount, candidate.description);
       if (existingKeys.has(key)) {
         duplicateRows.push(candidate);
       } else {

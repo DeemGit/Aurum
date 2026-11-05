@@ -18,7 +18,7 @@ const ACCOUNT_TYPES: AccountType[] = ["checking", "debit_card", "savings", "cred
 const EMPTY_FORM = { name: "", type: "checking" as AccountType, currency: getCurrency() };
 
 export function AccountFormModal({ open, onClose, account }: AccountFormModalProps) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const createAccount = useCreateAccount();
   const updateAccount = useUpdateAccount();
 
@@ -91,9 +91,9 @@ export function AccountFormModal({ open, onClose, account }: AccountFormModalPro
             disabled={Boolean(account)}
             onChange={(event) => setForm((prev) => ({ ...prev, currency: event.target.value }))}
           >
-            {CURRENCIES.map((code) => (
-              <option key={code} value={code}>
-                {getCurrencyLabel(code)}
+            {CURRENCIES.map((currency) => (
+              <option key={currency.code} value={currency.code}>
+                {getCurrencyLabel(currency.code, language)}
               </option>
             ))}
           </Select>
