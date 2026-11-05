@@ -7,9 +7,9 @@ const EMPTY: ImportMapping = { date: "", amount: "", description: "", merchant: 
 // Header rows as the banks actually emit them (see the per-preset comments in
 // lib/bankPresets.ts for where each export comes from).
 const TBANK_CSV = [
-  '"Дата операции";"Дата платежа";"Номер карты";"Статус";"Сумма операции";"Валюта операции";"Сумма платежа";"Валюта платежа";"Кэшбэк";"Категория";"MCC";"Описание";"Бонусы (включая кэшбэк)"',
-  '"24.10.2018 17:04:25";"24.10.2018";"*8305";"OK";"-882,04";"RUB";"-882,04";"RUB";"";"Переводы/иб";"";"Пополнение счета Тинькофф Брокер";"0,00"',
-  '"25.10.2018 09:12:00";"25.10.2018";"*8305";"FAILED";"-1500,00";"RUB";"-1500,00";"RUB";"";"Супермаркеты";"5411";"Пятёрочка";"0,00"',
+  '"Имя счёта";"Номер карты";"Дата операции";"Сумма операции";"Валюта операции";"Сумма в валюте счёта";"Валюта счёта";"Статус";"Категория по-умолчанию";"Ваша категория";"MCC";"Описание";"Сообщение";"Округление";"Сумма операции с округлением";"Бонусы (включая кэшбэк)";"Учёт в аналитике"',
+  '"Black";"*8305";"24.10.2018 17:04:25";"-882,04";"RUB";"-882,04";"RUB";"OK";"Переводы";"Переводы";"";"Пополнение счета Тинькофф Брокер";"комментарий";"0,00";"-882,04";"0,00";"Да"',
+  '"Black";"*8305";"25.10.2018 09:12:00";"-1500,00";"RUB";"-1500,00";"RUB";"FAILED";"Супермаркеты";"Супермаркеты";"5411";"Пятёрочка";"";"";"-1500,00";"0,00";"Да"',
 ].join("\n");
 
 const MONOBANK_CSV = [
@@ -42,10 +42,16 @@ describe("detectPreset", () => {
 });
 
 describe("applyPresetMapping", () => {
-  it("maps T-Bank onto the card-currency amount and keeps the category", () => {
+  it("maps T-Bank onto the account-currency amount, user category and message", () => {
     const headers = parseCsv(TBANK_CSV)[0];
     const mapping = applyPresetMapping(findPreset("tbank")!, headers, EMPTY);
-    expect(mapping).toMatchObject({ date: "Дата операции", amount: "Сумма платежа", description: "Описание", category: "Категория" });
+    expect(mapping).toMatchObject({
+      date: "Дата операции",
+      amount: "Сумма в валюте счёта",
+      description: "Описание",
+      category: "Ваша категория",
+      notes: "Сообщение",
+    });
   });
 
   it("matches monobank's currency-suffixed amount header by prefix", () => {
@@ -83,8 +89,9 @@ describe("preset formats against real sample rows", () => {
   it("parses T-Bank's timestamped date and comma-decimal amount", () => {
     const [, row] = parseCsv(TBANK_CSV);
     const preset = findPreset("tbank")!;
-    expect(parseDateWithFormat(row[0], preset.dateFormat)).toBe("2018-10-24");
-    expect(parseAmount(row[6], preset.amountFormat)).toBe(-882.04);
+    // Дата операции = index 2, Сумма в валюте счёта = index 5
+    expect(parseDateWithFormat(row[2], preset.dateFormat)).toBe("2018-10-24");
+    expect(parseAmount(row[5], preset.amountFormat)).toBe(-882.04);
   });
 
   it("parses monobank's timestamped date and dot-decimal amount", () => {

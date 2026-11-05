@@ -12,10 +12,12 @@ import {
   useTransferMatches,
   useUpdateTransaction,
 } from "@/hooks/useTransactions";
-import { useTranslation } from "@/lib/i18n";
+import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { buildHierarchicalCategories, translateCategoryName } from "@/lib/categoryLabels";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatDeltaSeconds, formatOccurredAt, formatTransactionDate } from "@/lib/format";
 import type { Tag, Transaction, TransactionInput, TransactionSplitInput, TransactionType } from "@/types";
+
+type MergeCandidate = { transaction: Transaction; delta_seconds: number };
 
 interface TransactionFormModalProps {
   open: boolean;
@@ -93,9 +95,13 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
   const [splitMode, setSplitMode] = useState(false);
   const [splitRows, setSplitRows] = useState<SplitRowState[]>([emptySplitRow(), emptySplitRow()]);
   const [error, setError] = useState<string | null>(null);
+  const [previewCandidate, setPreviewCandidate] = useState<MergeCandidate | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setPreviewCandidate(null);
+      return;
+    }
     if (transaction) {
       const hasSplits = transaction.splits.length > 0;
       // A split's categories always share one parent (see
@@ -301,6 +307,7 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
   }
 
   return (
+    <>
     <Dialog
       open={open}
       onClose={onClose}
@@ -619,30 +626,29 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
         {transferMatches.data && transferMatches.data.candidates.length > 0 && (
           <div className="space-y-2 rounded-md border border-border p-3">
             <p className="text-xs font-medium text-text-secondary">{t("transactions.form.mergeHint")}</p>
-            {transferMatches.data.candidates.slice(0, 3).map((candidate) => (
-              <div key={candidate.transaction.id} className="flex items-center justify-between gap-2 text-sm">
-                <span className="min-w-0 truncate">
-                  {candidate.transaction.account.name}: {candidate.transaction.description} (
-                  {formatCurrency(candidate.transaction.amount, candidate.transaction.account.currency)})
-                </span>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={mergeTransferMutation.isPending || !transaction}
-                  onClick={async () => {
-                    if (!transaction) return;
-                    const sourceIsExpense = transaction.type === "expense";
-                    await mergeTransferMutation.mutateAsync({
-                      source_transaction_id: sourceIsExpense ? transaction.id : candidate.transaction.id,
-                      destination_transaction_id: sourceIsExpense ? candidate.transaction.id : transaction.id,
-                    });
-                    onClose();
-                  }}
-                >
-                  {t("transactions.form.mergeButton")}
-                </Button>
-              </div>
-            ))}
+            {transferMatches.data.candidates.slice(0, 3).map((candidate) => {
+              const tx = candidate.transaction;
+              return (
+                <div key={tx.id} className="flex items-center justify-between gap-2 text-sm">
+                  <span className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      className="block max-w-full truncate text-left font-medium text-text-primary underline-offset-2 hover:underline"
+                      onClick={() => setPreviewCandidate(candidate)}
+                    >
+                      {tx.description}
+                    </button>
+                    <span className="block truncate text-xs text-text-muted">
+                      {tx.account.name} · {formatOccurredAt(tx.occurred_at)} ·{" "}
+                      {formatCurrency(tx.amount, tx.account.currency)} · {formatDeltaSeconds(candidate.delta_seconds)}
+                    </span>
+                  </span>
+                  <Button type="button" variant="secondary" onClick={() => setPreviewCandidate(candidate)}>
+                    {t("transactions.form.mergeButton")}
+                  </Button>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -658,5 +664,94 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
         </div>
       </form>
     </Dialog>
+
+      <Dialog
+        open={previewCandidate !== null}
+        onClose={() => setPreviewCandidate(null)}
+        title={t("transactions.form.mergePreviewTitle")}
+      >
+        {previewCandidate && (
+          <div className="space-y-3 text-sm">
+            <dl className="space-y-2">
+              <div>
+                <dt className="text-xs text-text-muted">{t("transactions.form.mergePreviewDescription")}</dt>
+                <dd className="text-text-primary">{previewCandidate.transaction.description}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-text-muted">{t("transactions.form.mergePreviewAccount")}</dt>
+                <dd className="text-text-primary">{previewCandidate.transaction.account.name}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-text-muted">{t("transactions.form.mergePreviewType")}</dt>
+                <dd className="text-text-primary">
+                  {t(`transactions.${previewCandidate.transaction.type}` as TranslationKey)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-text-muted">{t("transactions.form.mergePreviewAmount")}</dt>
+                <dd className="text-text-primary tabular-nums">
+                  {formatCurrency(
+                    previewCandidate.transaction.amount,
+                    previewCandidate.transaction.account.currency,
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-text-muted">{t("transactions.form.mergePreviewDate")}</dt>
+                <dd className="text-text-primary">
+                  {formatTransactionDate(previewCandidate.transaction.date, true)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-text-muted">{t("transactions.form.mergePreviewTime")}</dt>
+                <dd className="text-text-primary">{formatOccurredAt(previewCandidate.transaction.occurred_at)}</dd>
+              </div>
+              {previewCandidate.transaction.merchant && (
+                <div>
+                  <dt className="text-xs text-text-muted">{t("transactions.form.mergePreviewMerchant")}</dt>
+                  <dd className="text-text-primary">{previewCandidate.transaction.merchant}</dd>
+                </div>
+              )}
+              {previewCandidate.transaction.notes && (
+                <div>
+                  <dt className="text-xs text-text-muted">{t("transactions.form.mergePreviewNotes")}</dt>
+                  <dd className="whitespace-pre-wrap text-text-primary">{previewCandidate.transaction.notes}</dd>
+                </div>
+              )}
+              <div>
+                <dt className="text-xs text-text-muted">{t("transactions.form.mergePreviewDelta")}</dt>
+                <dd className="text-text-primary">{formatDeltaSeconds(previewCandidate.delta_seconds)}</dd>
+              </div>
+            </dl>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="ghost" onClick={() => setPreviewCandidate(null)}>
+                {t("transactions.form.mergeCancelPreview")}
+              </Button>
+              <Button
+                type="button"
+                disabled={mergeTransferMutation.isPending || !transaction}
+                onClick={async () => {
+                  if (!transaction || !previewCandidate) return;
+                  const sourceIsExpense = transaction.type === "expense";
+                  await mergeTransferMutation.mutateAsync({
+                    source_transaction_id: sourceIsExpense
+                      ? transaction.id
+                      : previewCandidate.transaction.id,
+                    destination_transaction_id: sourceIsExpense
+                      ? previewCandidate.transaction.id
+                      : transaction.id,
+                  });
+                  setPreviewCandidate(null);
+                  onClose();
+                }}
+              >
+                {t("transactions.form.mergeConfirm")}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Dialog>
+    </>
   );
 }

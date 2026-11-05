@@ -65,19 +65,20 @@ function findHeader(headers: string[], matcher: HeaderMatcher): string {
 
 export const BANK_PRESETS: readonly BankPreset[] = [
   {
-    // Web version → Операции → «Выгрузка операций» → CSV. Semicolon-separated,
-    // every field quoted, comma decimal mark, dates carry a time of day.
-    // "Сумма платежа" is the amount in the card's own currency (a foreign
-    // purchase shows the original amount in "Сумма операции"), which is what
-    // the account balance actually moved by.
+    // Web → Операции → «Выгрузка операций» → CSV. Semicolon-separated, every
+    // field quoted, comma decimal mark, dates carry a time of day.
+    // "Сумма в валюте счёта" is what the account balance moved by (foreign
+    // purchases keep the original amount in "Сумма операции"). Older exports
+    // used "Сумма платежа" — kept as amount fallback for manual preset pick.
     id: "tbank",
     label: "Т-Банк",
-    detect: [["дата операции"], ["сумма платежа"], ["описание"], ["статус"]],
+    detect: [["дата операции"], ["сумма в валюте счёта"], ["описание"], ["статус"]],
     mapping: {
       date: ["дата операции"],
-      amount: ["сумма платежа"],
+      amount: ["сумма в валюте счёта", "сумма платежа"],
       description: ["описание"],
-      category: ["категория"],
+      category: ["ваша категория"],
+      notes: ["сообщение"],
     },
     dateFormat: "DD.MM.YYYY",
     amountFormat: "comma-decimal",

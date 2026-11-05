@@ -104,6 +104,28 @@ export function formatTransactionDate(isoDate: string, includeYear = false): str
   }).format(date);
 }
 
+/** Date + time for precise timestamps (transfer-match preview, occurred_at). */
+export function formatOccurredAt(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat(getIntlLocale(), {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+/** Compact relative delta for transfer-match candidates (e.g. "±2h", "±15m"). */
+export function formatDeltaSeconds(deltaSeconds: number): string {
+  const abs = Math.abs(deltaSeconds);
+  if (abs < 60) return `±${abs}s`;
+  if (abs < 3600) return `±${Math.round(abs / 60)}m`;
+  if (abs < 86400) return `±${Math.round(abs / 3600)}h`;
+  return `±${Math.round(abs / 86400)}d`;
+}
+
 /** Russian noun pluralization: pick the right form for 1/2-4/5+ (with the
  * 11-14 exception), e.g. pluralizeRu(3, "актив", "актива", "активов"). */
 export function pluralizeRu(count: number, one: string, few: string, many: string): string {
