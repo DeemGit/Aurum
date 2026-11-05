@@ -26,7 +26,7 @@ describe("formatCurrency", () => {
     // The exact regression this suite exists to catch: currencyDisplay
     // "code" would turn this into "USD 614" — see lib/format.ts's
     // createCurrencyFormatter docstring and the PR #18 review that flagged it.
-    expect(formatCurrency(614, "USD")).toBe("$614");
+    expect(formatCurrency(614, "USD")).toBe("$614.00");
   });
 
   it("drops the region prefix on ambiguous symbols (CNY, HKD) instead of spelling out the code", () => {
@@ -39,8 +39,8 @@ describe("formatCurrency", () => {
   });
 
   it("rounds to whole units", () => {
-    expect(formatCurrency(614.5, "USD")).toBe("$615");
-    expect(formatCurrency(614.4, "USD")).toBe("$614");
+    expect(formatCurrency(614.5, "USD")).toBe("$614.50");
+    expect(formatCurrency(614.4, "USD")).toBe("$614.40");
   });
 
   it("accepts a numeric string the same as a number", () => {
@@ -69,15 +69,15 @@ describe("formatSignedCurrency", () => {
   beforeEach(() => setLanguage("en"));
 
   it("prefixes a plus sign on positive amounts", () => {
-    expect(formatSignedCurrency(100, "USD")).toBe("+$100");
+    expect(formatSignedCurrency(100, "USD")).toBe("+$100.00");
   });
 
   it("leaves the formatter's own minus sign on negative amounts, no double sign", () => {
-    expect(formatSignedCurrency(-100, "USD")).toBe("-$100");
+    expect(formatSignedCurrency(-100, "USD")).toBe("-$100.00");
   });
 
   it("adds no sign for zero", () => {
-    expect(formatSignedCurrency(0, "USD")).toBe("$0");
+    expect(formatSignedCurrency(0, "USD")).toBe("$0.00");
   });
 });
 

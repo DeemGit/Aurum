@@ -11,7 +11,7 @@ you want a clean demo dataset again.
 """
 import asyncio
 import random
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import delete, select
@@ -23,6 +23,15 @@ from app.models.enums import AccountType, AssetClass, TransactionType
 random.seed(42)
 
 TODAY = date.today()
+
+
+def _tx(**kwargs) -> Transaction:
+    """Mock seed helper ? fills occurred_at from date when omitted."""
+    day = kwargs["date"]
+    kwargs.setdefault("occurred_at", datetime(day.year, day.month, day.day, tzinfo=timezone.utc))
+    kwargs.setdefault("fee_amount", Decimal("0"))
+    kwargs.setdefault("is_cashback", False)
+    return Transaction(**kwargs)
 
 
 def _shift_month(d: date, months: int) -> date:
@@ -74,7 +83,7 @@ async def seed_transactions(session, main_account: Account, savings: Account, cr
         salary_date = day_in_month(month_start, 1)
         if salary_date:
             session.add(
-                Transaction(
+                 _tx(
                     account_id=main_account.id,
                     category_id=categories["Salary"].id,
                     type=TransactionType.INCOME,
@@ -86,7 +95,7 @@ async def seed_transactions(session, main_account: Account, savings: Account, cr
         freelance_date = day_in_month(month_start, 15)
         if freelance_date and month_start.month % 2 == 0:
             session.add(
-                Transaction(
+                 _tx(
                     account_id=main_account.id,
                     category_id=categories["Freelance"].id,
                     type=TransactionType.INCOME,
@@ -100,7 +109,7 @@ async def seed_transactions(session, main_account: Account, savings: Account, cr
         rent_date = day_in_month(month_start, 2)
         if rent_date:
             session.add(
-                Transaction(
+                 _tx(
                     account_id=main_account.id,
                     category_id=categories["Housing & Utilities"].id,
                     type=TransactionType.EXPENSE,
@@ -114,7 +123,7 @@ async def seed_transactions(session, main_account: Account, savings: Account, cr
             d = day_in_month(month_start, day)
             if d:
                 session.add(
-                    Transaction(
+                     _tx(
                         account_id=main_account.id,
                         category_id=categories["Groceries"].id,
                         type=TransactionType.EXPENSE,
@@ -128,7 +137,7 @@ async def seed_transactions(session, main_account: Account, savings: Account, cr
             d = day_in_month(month_start, day)
             if d:
                 session.add(
-                    Transaction(
+                     _tx(
                         account_id=main_account.id,
                         category_id=categories["Dining Out"].id,
                         type=TransactionType.EXPENSE,
@@ -142,7 +151,7 @@ async def seed_transactions(session, main_account: Account, savings: Account, cr
             d = day_in_month(month_start, day)
             if d:
                 session.add(
-                    Transaction(
+                     _tx(
                         account_id=main_account.id,
                         category_id=categories["Transportation"].id,
                         type=TransactionType.EXPENSE,
@@ -155,7 +164,7 @@ async def seed_transactions(session, main_account: Account, savings: Account, cr
         gym_date = day_in_month(month_start, 6)
         if gym_date:
             session.add(
-                Transaction(
+                 _tx(
                     account_id=main_account.id,
                     category_id=categories["Health & Fitness"].id,
                     type=TransactionType.EXPENSE,
@@ -168,7 +177,7 @@ async def seed_transactions(session, main_account: Account, savings: Account, cr
         movie_date = day_in_month(month_start, 22)
         if movie_date:
             session.add(
-                Transaction(
+                 _tx(
                     account_id=main_account.id,
                     category_id=categories["Entertainment"].id,
                     type=TransactionType.EXPENSE,
@@ -182,7 +191,7 @@ async def seed_transactions(session, main_account: Account, savings: Account, cr
         if subs_date:
             for desc, value in [("Netflix", "15.99"), ("Spotify", "10.99"), ("Cloud storage", "9.99")]:
                 session.add(
-                    Transaction(
+                     _tx(
                         account_id=main_account.id,
                         category_id=categories["Subscriptions"].id,
                         type=TransactionType.EXPENSE,
@@ -196,7 +205,7 @@ async def seed_transactions(session, main_account: Account, savings: Account, cr
         cc_shopping_date = day_in_month(month_start, 20)
         if cc_shopping_date:
             session.add(
-                Transaction(
+                 _tx(
                     account_id=credit_card.id,
                     category_id=categories["Shopping"].id,
                     type=TransactionType.EXPENSE,
@@ -208,7 +217,7 @@ async def seed_transactions(session, main_account: Account, savings: Account, cr
         cc_dining_date = day_in_month(month_start, 10)
         if cc_dining_date:
             session.add(
-                Transaction(
+                 _tx(
                     account_id=credit_card.id,
                     category_id=categories["Dining Out"].id,
                     type=TransactionType.EXPENSE,
@@ -222,7 +231,7 @@ async def seed_transactions(session, main_account: Account, savings: Account, cr
         transfer_date = day_in_month(month_start, 27)
         if transfer_date:
             session.add(
-                Transaction(
+                 _tx(
                     account_id=main_account.id,
                     transfer_account_id=savings.id,
                     type=TransactionType.TRANSFER,

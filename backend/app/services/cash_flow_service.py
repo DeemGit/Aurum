@@ -2,6 +2,8 @@
 Dashboard (locked to one month) nor Reports (one category at a time, or a
 category ranking) answers on its own. Transfers between the user's own
 accounts are excluded from both totals, same as the Dashboard breakdown.
+Refunds are not income/expense; cash returned is tracked as refunds_received
+in the refund's own month.
 """
 from collections import defaultdict
 from datetime import date as date_
@@ -23,7 +25,7 @@ async def get_cash_flow(
     session: AsyncSession, start_date: date_ | None, end_date: date_ | None
 ) -> CashFlowResponse:
     bounds_stmt = select(func.min(Transaction.date), func.max(Transaction.date)).where(
-        Transaction.type != TransactionType.TRANSFER
+        Transaction.type.in_((TransactionType.INCOME, TransactionType.EXPENSE, TransactionType.REFUND))
     )
     if start_date:
         bounds_stmt = bounds_stmt.where(Transaction.date >= start_date)
@@ -40,6 +42,7 @@ async def get_cash_flow(
         points=[],
         total_income=Decimal("0"),
         total_expense=Decimal("0"),
+        total_refunds_received=Decimal("0"),
         total_net=Decimal("0"),
     )
     if effective_start is None or effective_end is None:
@@ -53,7 +56,7 @@ async def get_cash_flow(
             func.sum(Transaction.amount).label("amount"),
         )
         .where(
-            Transaction.type != TransactionType.TRANSFER,
+            Transaction.type.in_((TransactionType.INCOME, TransactionType.EXPENSE, TransactionType.REFUND)),
             Transaction.date >= effective_start,
             Transaction.date <= effective_end,
         )
@@ -71,11 +74,22 @@ async def get_cash_flow(
         totals = by_month.get((year, month), {})
         income = totals.get(TransactionType.INCOME, Decimal("0"))
         expense = totals.get(TransactionType.EXPENSE, Decimal("0"))
-        points.append(CashFlowPoint(year=year, month=month, income=income, expense=expense, net=income - expense))
+        refunds_received = totals.get(TransactionType.REFUND, Decimal("0"))
+        points.append(
+            CashFlowPoint(
+                year=year,
+                month=month,
+                income=income,
+                expense=expense,
+                refunds_received=refunds_received,
+                net=income - expense + refunds_received,
+            )
+        )
         year, month = _next_month(year, month)
 
     total_income = sum((p.income for p in points), Decimal("0"))
     total_expense = sum((p.expense for p in points), Decimal("0"))
+    total_refunds = sum((p.refunds_received for p in points), Decimal("0"))
 
     return CashFlowResponse(
         start_date=effective_start,
@@ -83,5 +97,6 @@ async def get_cash_flow(
         points=points,
         total_income=total_income,
         total_expense=total_expense,
-        total_net=total_income - total_expense,
+        total_refunds_received=total_refunds,
+        total_net=total_income - total_expense + total_refunds,
     )

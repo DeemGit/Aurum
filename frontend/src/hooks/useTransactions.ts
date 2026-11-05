@@ -4,8 +4,10 @@ import {
   createTransaction,
   deleteTransaction,
   fetchAllTransactionsInRange,
+  fetchTransferMatches,
   fetchTransactions,
   fetchTransactionYears,
+  mergeTransfer,
   updateTransaction,
   type TransactionFilters,
 } from "@/api/transactions";
@@ -90,6 +92,22 @@ export function useDeleteTransaction() {
   const invalidate = useInvalidateAfterTransactionChange();
   return useMutation({
     mutationFn: (id: number) => deleteTransaction(id),
+    onSuccess: invalidate,
+  });
+}
+
+export function useTransferMatches(transactionId: number | null) {
+  return useQuery({
+    queryKey: ["transfer-matches", transactionId],
+    queryFn: () => fetchTransferMatches(transactionId!),
+    enabled: transactionId !== null,
+  });
+}
+
+export function useMergeTransfer() {
+  const invalidate = useInvalidateAfterTransactionChange();
+  return useMutation({
+    mutationFn: mergeTransfer,
     onSuccess: invalidate,
   });
 }

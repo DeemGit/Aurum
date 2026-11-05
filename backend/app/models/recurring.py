@@ -29,6 +29,10 @@ class RecurringTransaction(Base, TimestampMixin):
         Enum(TransactionType, name="recurring_transaction_type", native_enum=False, length=10), nullable=False
     )
     amount: Mapped[Numeric] = mapped_column(Numeric(14, 2), nullable=False)
+    # Destination-leg amount for transfer templates (same shape as Transaction).
+    transfer_amount: Mapped[Numeric | None] = mapped_column(Numeric(14, 2), nullable=True)
+    exchange_rate: Mapped[Numeric | None] = mapped_column(Numeric(18, 8), nullable=True)
+    fee_amount: Mapped[Numeric] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     description: Mapped[str] = mapped_column(String(255), nullable=False)
     merchant: Mapped[str | None] = mapped_column(String(150), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

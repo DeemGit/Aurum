@@ -102,20 +102,30 @@ async def _cash_cumulative_events(session: AsyncSession) -> list[tuple[date_, De
     cash_account_ids = {acc_id for acc_id, acc_type in accounts_result.all() if acc_type in CASH_ACCOUNT_TYPES}
 
     txns_result = await session.execute(
-        select(Transaction.date, Transaction.type, Transaction.amount, Transaction.account_id, Transaction.transfer_account_id)
+        select(
+            Transaction.date,
+            Transaction.type,
+            Transaction.amount,
+            Transaction.transfer_amount,
+            Transaction.fee_amount,
+            Transaction.account_id,
+            Transaction.transfer_account_id,
+        )
     )
 
+    from app.services.money_effects import cash_delta_for_accounts
+
     delta_by_date: dict[date_, Decimal] = defaultdict(Decimal)
-    for tx_date, tx_type, amount, account_id, transfer_account_id in txns_result.all():
-        if tx_type == TransactionType.INCOME and account_id in cash_account_ids:
-            delta_by_date[tx_date] += amount
-        elif tx_type == TransactionType.EXPENSE and account_id in cash_account_ids:
-            delta_by_date[tx_date] -= amount
-        elif tx_type == TransactionType.TRANSFER:
-            if account_id in cash_account_ids:
-                delta_by_date[tx_date] -= amount
-            if transfer_account_id in cash_account_ids:
-                delta_by_date[tx_date] += amount
+    for tx_date, tx_type, amount, transfer_amount, fee_amount, account_id, transfer_account_id in txns_result.all():
+        delta_by_date[tx_date] += cash_delta_for_accounts(
+            tx_type=tx_type,
+            amount=amount,
+            transfer_amount=transfer_amount,
+            fee_amount=fee_amount,
+            account_id=account_id,
+            transfer_account_id=transfer_account_id,
+            cash_account_ids=cash_account_ids,
+        )
 
     events: list[tuple[date_, Decimal]] = []
     running = Decimal("0")

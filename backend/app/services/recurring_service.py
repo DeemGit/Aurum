@@ -6,7 +6,8 @@ week never silently back-fills a pile of transactions.
 """
 import calendar
 from datetime import date as date_
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -83,6 +84,9 @@ def _to_read(recurring: RecurringTransaction) -> RecurringTransactionRead:
         transfer_account_name=recurring.transfer_account.name if recurring.transfer_account else None,
         type=recurring.type,
         amount=recurring.amount,
+        transfer_amount=recurring.transfer_amount,
+        exchange_rate=recurring.exchange_rate,
+        fee_amount=recurring.fee_amount or Decimal("0"),
         description=recurring.description,
         merchant=recurring.merchant,
         notes=recurring.notes,
@@ -149,6 +153,10 @@ async def post_recurring(session: AsyncSession, recurring_id: int) -> RecurringT
     recurring = await _get_or_404(session, recurring_id)
     today = date_.today()
 
+    occurred_at = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
+    transfer_amount = recurring.transfer_amount
+    if recurring.type == TransactionType.TRANSFER and transfer_amount is None:
+        transfer_amount = recurring.amount
     session.add(
         Transaction(
             account_id=recurring.account_id,
@@ -156,10 +164,17 @@ async def post_recurring(session: AsyncSession, recurring_id: int) -> RecurringT
             transfer_account_id=recurring.transfer_account_id,
             type=recurring.type,
             amount=recurring.amount,
+            transfer_amount=transfer_amount,
+            exchange_rate=recurring.exchange_rate,
+            fee_amount=recurring.fee_amount or Decimal("0"),
             description=recurring.description,
             merchant=recurring.merchant,
             notes=recurring.notes,
             date=today,
+            occurred_at=occurred_at,
+            cashback_category_id=None,
+            cashback_amount=None,
+            is_cashback=False,
         )
     )
     recurring.last_posted_date = today

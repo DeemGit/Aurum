@@ -3,7 +3,8 @@ import { Dialog } from "@/components/ui/Dialog";
 import { Button } from "@/components/ui/Button";
 import { Input, Label, Select } from "@/components/ui/Input";
 import { useCreateAccount, useUpdateAccount } from "@/hooks/useAccounts";
-import { useTranslation, type TranslationKey } from "@/lib/i18n";
+import { CURRENCIES, getCurrencyLabel } from "@/lib/currency";
+import { getCurrency, useTranslation, type TranslationKey } from "@/lib/i18n";
 import type { Account, AccountType } from "@/types";
 
 interface AccountFormModalProps {
@@ -14,7 +15,7 @@ interface AccountFormModalProps {
 
 const ACCOUNT_TYPES: AccountType[] = ["checking", "debit_card", "savings", "credit_card", "cash", "investment", "other"];
 
-const EMPTY_FORM = { name: "", type: "checking" as AccountType };
+const EMPTY_FORM = { name: "", type: "checking" as AccountType, currency: getCurrency() };
 
 export function AccountFormModal({ open, onClose, account }: AccountFormModalProps) {
   const { t } = useTranslation();
@@ -26,7 +27,11 @@ export function AccountFormModal({ open, onClose, account }: AccountFormModalPro
 
   useEffect(() => {
     if (!open) return;
-    setForm(account ? { name: account.name, type: account.type } : EMPTY_FORM);
+    setForm(
+      account
+        ? { name: account.name, type: account.type, currency: account.currency }
+        : { ...EMPTY_FORM, currency: getCurrency() }
+    );
     setError(null);
   }, [open, account]);
 
@@ -38,7 +43,8 @@ export function AccountFormModal({ open, onClose, account }: AccountFormModalPro
 
     try {
       if (account) {
-        await updateAccount.mutateAsync({ id: account.id, input: form });
+        // Currency is immutable after create — only name/type go on update.
+        await updateAccount.mutateAsync({ id: account.id, input: { name: form.name, type: form.type } });
       } else {
         await createAccount.mutateAsync(form);
       }
@@ -75,6 +81,23 @@ export function AccountFormModal({ open, onClose, account }: AccountFormModalPro
               </option>
             ))}
           </Select>
+        </div>
+
+        <div>
+          <Label htmlFor="account-currency">{t("account.form.currencyLabel")}</Label>
+          <Select
+            id="account-currency"
+            value={form.currency}
+            disabled={Boolean(account)}
+            onChange={(event) => setForm((prev) => ({ ...prev, currency: event.target.value }))}
+          >
+            {CURRENCIES.map((code) => (
+              <option key={code} value={code}>
+                {getCurrencyLabel(code)}
+              </option>
+            ))}
+          </Select>
+          {account && <p className="mt-1 text-xs text-text-muted">{t("account.form.currencyImmutable")}</p>}
         </div>
 
         {error && <p className="text-sm text-danger">{error}</p>}

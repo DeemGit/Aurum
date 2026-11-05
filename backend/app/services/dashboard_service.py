@@ -34,8 +34,28 @@ async def get_dashboard_summary(session: AsyncSession, year: int, month: int) ->
     totals: dict[TransactionType, Decimal] = {row[0]: row[1] for row in totals_result.all()}
 
     real_income = totals.get(TransactionType.INCOME, Decimal("0"))
-    spent = totals.get(TransactionType.EXPENSE, Decimal("0"))
+    raw_spent = totals.get(TransactionType.EXPENSE, Decimal("0"))
     transferred_out = totals.get(TransactionType.TRANSFER, Decimal("0"))
+
+    # Refunds attribute back to the purchase month: reduce spent by refunds
+    # whose original expense falls in this month (not by refund.date).
+    refund_attr_stmt = (
+        select(func.coalesce(func.sum(Transaction.amount), 0))
+        .where(
+            Transaction.type == TransactionType.REFUND,
+            Transaction.refund_of_transaction_id.in_(
+                select(Transaction.id).where(
+                    Transaction.type == TransactionType.EXPENSE,
+                    Transaction.date >= start,
+                    Transaction.date <= end,
+                )
+            ),
+        )
+    )
+    attributed_refunds = (await session.execute(refund_attr_stmt)).scalar_one()
+    spent = raw_spent - attributed_refunds
+    if spent < 0:
+        spent = Decimal("0")
 
     # A subcategory's spending rolls up into its parent's slice, and a split
     # transaction's category_id=NULL means its category lives on its split

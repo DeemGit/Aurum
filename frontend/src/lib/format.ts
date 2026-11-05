@@ -30,7 +30,8 @@ function createCurrencyFormatter(currency: string, maximumFractionDigits: number
 // to be in a *different* currency than that setting.
 export function formatCurrency(amount: number | string, currency: string = getCurrency()): string {
   const value = typeof amount === "string" ? Number(amount) : amount;
-  return createCurrencyFormatter(currency, 0).format(value);
+  // Fiat shows cents — whole-unit rounding hid kopecks/cents on account balances.
+  return createCurrencyFormatter(currency, 2).format(value);
 }
 
 /** Same currency formatting as formatCurrency, but scales decimal precision

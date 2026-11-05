@@ -96,18 +96,14 @@ async def get_budget_status(session: AsyncSession, year: int, month: int) -> Bud
     # lives on its split lines instead (see category_rollup.py), so a plain
     # sum on Transaction.category_id alone would silently under-count a
     # budget funded partly by split purchases.
-    plain_stmt = (
-        select(Transaction.category_id, func.coalesce(func.sum(Transaction.amount), 0))
-        .where(
-            Transaction.category_id.in_(counted_ids),
-            Transaction.type == TransactionType.EXPENSE,
-            Transaction.date >= start,
-            Transaction.date <= end,
-        )
-        .group_by(Transaction.category_id)
+    plain_stmt = select(Transaction.id, Transaction.category_id, Transaction.amount).where(
+        Transaction.category_id.in_(counted_ids),
+        Transaction.type == TransactionType.EXPENSE,
+        Transaction.date >= start,
+        Transaction.date <= end,
     )
     split_stmt = (
-        select(TransactionSplit.category_id, func.coalesce(func.sum(TransactionSplit.amount), 0))
+        select(TransactionSplit.transaction_id, TransactionSplit.category_id, TransactionSplit.amount)
         .join(Transaction, Transaction.id == TransactionSplit.transaction_id)
         .where(
             TransactionSplit.category_id.in_(counted_ids),
@@ -115,13 +111,30 @@ async def get_budget_status(session: AsyncSession, year: int, month: int) -> Bud
             Transaction.date >= start,
             Transaction.date <= end,
         )
-        .group_by(TransactionSplit.category_id)
     )
+    contributions = list((await session.execute(plain_stmt)).all()) + list((await session.execute(split_stmt)).all())
+    from app.services.money_effects import refund_total_for_expense_ids
+
+    expense_ids = {row[0] for row in contributions}
+    refund_totals = await refund_total_for_expense_ids(session, expense_ids)
+    expense_amounts = {}
+    if expense_ids:
+        expense_amounts = {
+            row[0]: row[1]
+            for row in (
+                await session.execute(select(Transaction.id, Transaction.amount).where(Transaction.id.in_(expense_ids)))
+            ).all()
+        }
+
     spent_by_category: dict[int, Decimal] = defaultdict(Decimal)
-    for category_id, amount in (await session.execute(plain_stmt)).all():
-        spent_by_category[category_id] += amount
-    for category_id, amount in (await session.execute(split_stmt)).all():
-        spent_by_category[category_id] += amount
+    for transaction_id, category_id, amount in contributions:
+        net_amount = amount
+        refunded = refund_totals.get(transaction_id, Decimal("0"))
+        original_total = expense_amounts.get(transaction_id)
+        if refunded and original_total and original_total > 0:
+            net_amount = amount - (amount / original_total) * refunded
+        if net_amount > 0 and category_id is not None:
+            spent_by_category[category_id] += net_amount
 
     items = []
     for budget in budgets:

@@ -20,8 +20,10 @@ import {
 import {
   AMOUNT_FORMATS,
   DATE_FORMATS,
+  computeImportHash,
   parseAmount,
   parseCsv,
+  parseDateTimeWithFormat,
   parseDateWithFormat,
   transactionDedupeKey,
   type AmountFormat,
@@ -214,11 +216,12 @@ export function CsvImportPage() {
     dateBounds?.max ?? null
   );
 
-  // Keyed on date+type+amount+description — see lib/csv.ts's
-  // transactionDedupeKey doc comment for why those fields and not an ID.
+  // Prefer import_hash when present (re-import after the hash column shipped);
+  // fall back to the legacy date|type|amount|description key for older rows.
   const existingKeys = useMemo(() => {
     const keys = new Set<string>();
     for (const tx of existingTransactions.data ?? []) {
+      if (tx.import_hash) keys.add(`hash:${tx.import_hash}`);
       keys.add(transactionDedupeKey(tx.date, tx.type, tx.amount, tx.description));
     }
     return keys;
@@ -256,8 +259,8 @@ export function CsvImportPage() {
         return;
       }
 
-      const isoDate = parseDateWithFormat(rawDate, dateFormat);
-      if (!isoDate) {
+      const parsedDate = parseDateTimeWithFormat(rawDate, dateFormat);
+      if (!parsedDate) {
         skippedRows.push({ row: rowNumber, reason: t("transactions.import.errorBadDate", { value: rawDate || "—" }) });
         return;
       }
@@ -284,7 +287,8 @@ export function CsvImportPage() {
         description,
         merchant: rawMerchant || null,
         notes: rawNotes || null,
-        date: isoDate,
+        date: parsedDate.date,
+        occurred_at: parsedDate.occurred_at,
       };
 
       const key = transactionDedupeKey(candidate.date, candidate.type, candidate.amount, candidate.description);
@@ -353,7 +357,22 @@ export function CsvImportPage() {
   async function handleImport() {
     setImportError(null);
     try {
-      const result = await bulkCreate.mutateAsync(valid);
+      const presetId = activePreset?.id;
+      const withHashes: TransactionInput[] = [];
+      for (const item of valid) {
+        const occurredAt = item.occurred_at ?? `${item.date}T00:00:00+00:00`;
+        const import_hash = await computeImportHash({
+          accountId: item.account_id,
+          date: item.date ?? occurredAt.slice(0, 10),
+          occurredAt,
+          amount: item.amount,
+          description: item.description,
+          merchant: item.merchant ?? undefined,
+          presetId,
+        });
+        withHashes.push({ ...item, occurred_at: occurredAt, import_hash });
+      }
+      const result = await bulkCreate.mutateAsync(withHashes);
       setCreatedCount(result.created);
     } catch (error) {
       setImportError(error instanceof ApiError ? error.message : t("transactions.import.importError"));

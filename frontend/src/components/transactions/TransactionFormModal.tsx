@@ -6,7 +6,12 @@ import { Input, Label, Select } from "@/components/ui/Input";
 import { TagInput } from "@/components/transactions/TagInput";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useCategories } from "@/hooks/useCategories";
-import { useCreateTransaction, useUpdateTransaction } from "@/hooks/useTransactions";
+import {
+  useCreateTransaction,
+  useMergeTransfer,
+  useTransferMatches,
+  useUpdateTransaction,
+} from "@/hooks/useTransactions";
 import { useTranslation } from "@/lib/i18n";
 import { buildHierarchicalCategories, translateCategoryName } from "@/lib/categoryLabels";
 import { formatCurrency } from "@/lib/format";
@@ -27,11 +32,17 @@ const EMPTY_FORM = {
   account_id: "",
   category_id: "",
   transfer_account_id: "",
+  refund_of_transaction_id: "",
   amount: "",
+  transfer_amount: "",
+  exchange_rate: "",
+  fee_amount: "0",
+  cashback_amount: "",
   description: "",
   merchant: "",
   notes: "",
   date: todayIso(),
+  time: "00:00",
 };
 
 interface SplitRowState {
@@ -70,6 +81,12 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
   const { data: categories } = useCategories();
   const createTransaction = useCreateTransaction();
   const updateTransaction = useUpdateTransaction();
+  const mergeTransferMutation = useMergeTransfer();
+  const transferMatches = useTransferMatches(
+    open && transaction && (transaction.type === "expense" || transaction.type === "income")
+      ? transaction.id
+      : null
+  );
 
   const [form, setForm] = useState(EMPTY_FORM);
   const [tags, setTags] = useState<Tag[]>([]);
@@ -87,6 +104,10 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
       // category was since deleted, there's nothing to derive from; the
       // base field is left blank and the user has to pick one again.
       const baseCategory = hasSplits ? transaction.splits.find((split) => split.category)?.category : null;
+      const occurred = transaction.occurred_at ? new Date(transaction.occurred_at) : null;
+      const time = occurred
+        ? `${String(occurred.getUTCHours()).padStart(2, "0")}:${String(occurred.getUTCMinutes()).padStart(2, "0")}`
+        : "00:00";
       setForm({
         type: transaction.type,
         account_id: String(transaction.account_id),
@@ -98,11 +119,19 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
             ? String(transaction.category_id)
             : "",
         transfer_account_id: transaction.transfer_account_id ? String(transaction.transfer_account_id) : "",
+        refund_of_transaction_id: transaction.refund_of_transaction_id
+          ? String(transaction.refund_of_transaction_id)
+          : "",
         amount: transaction.amount,
+        transfer_amount: transaction.transfer_amount ?? "",
+        exchange_rate: transaction.exchange_rate ?? "",
+        fee_amount: transaction.fee_amount ?? "0",
+        cashback_amount: transaction.cashback_amount ?? "",
         description: transaction.description,
         merchant: transaction.merchant ?? "",
         notes: transaction.notes ?? "",
         date: transaction.date,
+        time,
       });
       setTags(transaction.tags);
       setSplitMode(hasSplits);
@@ -195,6 +224,10 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
       setError(t("transactions.form.errorSameAccount"));
       return;
     }
+    if (form.type === "refund" && !form.refund_of_transaction_id) {
+      setError(t("transactions.form.errorRefundOf"));
+      return;
+    }
 
     // Undefined -> leave the transaction's existing splits untouched on
     // update, and create a normal single-category transaction. [] -> clears
@@ -229,21 +262,28 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
       splits = [];
     }
 
+    const occurred_at = `${form.date}T${form.time || "00:00"}:00+00:00`;
     const payload: TransactionInput = {
       type: form.type,
       account_id: Number(form.account_id),
       category_id:
-        form.type === "transfer" || (splits && splits.length > 0)
+        form.type === "transfer" || form.type === "refund" || (splits && splits.length > 0)
           ? null
           : form.category_id
             ? Number(form.category_id)
             : null,
       transfer_account_id: form.type === "transfer" ? Number(form.transfer_account_id) : null,
+      refund_of_transaction_id: form.type === "refund" ? Number(form.refund_of_transaction_id) : null,
       amount: form.amount,
+      transfer_amount: form.type === "transfer" && form.transfer_amount ? form.transfer_amount : null,
+      exchange_rate: form.type === "transfer" && form.exchange_rate ? form.exchange_rate : null,
+      fee_amount: form.type === "transfer" ? form.fee_amount || "0" : "0",
+      cashback_amount: form.type === "refund" && form.cashback_amount !== "" ? form.cashback_amount : null,
       description: form.description,
       merchant: form.merchant || null,
       notes: form.notes || null,
       date: form.date,
+      occurred_at,
       tag_ids: tags.map((tag) => tag.id),
       splits,
     };
@@ -275,12 +315,13 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
             onChange={(event) => {
               const nextType = event.target.value as TransactionType;
               setForm((prev) => ({ ...prev, type: nextType, category_id: "" }));
-              if (nextType === "transfer") setSplitMode(false);
+              if (nextType === "transfer" || nextType === "refund") setSplitMode(false);
             }}
           >
             <option value="expense">{t("transactions.form.typeExpense")}</option>
             <option value="income">{t("transactions.form.typeIncome")}</option>
             <option value="transfer">{t("transactions.form.typeTransfer")}</option>
+            <option value="refund">{t("transactions.refund")}</option>
           </Select>
         </div>
 
@@ -310,6 +351,81 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
         </div>
 
         <div>
+          <Label htmlFor="time">{t("transactions.form.timeLabel")}</Label>
+          <Input
+            id="time"
+            type="time"
+            value={form.time}
+            onChange={(event) => setForm((prev) => ({ ...prev, time: event.target.value }))}
+          />
+        </div>
+
+        {form.type === "transfer" && (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div>
+              <Label htmlFor="transfer_amount">{t("transactions.form.transferAmountLabel")}</Label>
+              <Input
+                id="transfer_amount"
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={form.transfer_amount}
+                placeholder={form.amount}
+                onChange={(event) => setForm((prev) => ({ ...prev, transfer_amount: event.target.value }))}
+              />
+            </div>
+            <div>
+              <Label htmlFor="exchange_rate">{t("transactions.form.exchangeRateLabel")}</Label>
+              <Input
+                id="exchange_rate"
+                type="number"
+                step="0.00000001"
+                min="0"
+                value={form.exchange_rate}
+                onChange={(event) => setForm((prev) => ({ ...prev, exchange_rate: event.target.value }))}
+              />
+            </div>
+            <div>
+              <Label htmlFor="fee_amount">{t("transactions.form.feeAmountLabel")}</Label>
+              <Input
+                id="fee_amount"
+                type="number"
+                step="0.01"
+                min="0"
+                value={form.fee_amount}
+                onChange={(event) => setForm((prev) => ({ ...prev, fee_amount: event.target.value }))}
+              />
+            </div>
+          </div>
+        )}
+
+        {form.type === "refund" && (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="refund_of">{t("transactions.form.refundOfLabel")}</Label>
+              <Input
+                id="refund_of"
+                type="number"
+                required
+                min="1"
+                value={form.refund_of_transaction_id}
+                onChange={(event) => setForm((prev) => ({ ...prev, refund_of_transaction_id: event.target.value }))}
+              />
+            </div>
+            <div>
+              <Label htmlFor="cashback_amount">{t("transactions.form.cashbackAmountLabel")}</Label>
+              <Input
+                id="cashback_amount"
+                type="number"
+                step="0.01"
+                value={form.cashback_amount}
+                onChange={(event) => setForm((prev) => ({ ...prev, cashback_amount: event.target.value }))}
+              />
+            </div>
+          </div>
+        )}
+
+        <div>
           <Label htmlFor="description">{t("transactions.form.descriptionLabel")}</Label>
           <Input
             id="description"
@@ -333,7 +449,7 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
             </option>
             {accounts?.map((account) => (
               <option key={account.id} value={account.id}>
-                {account.name}
+                {account.name} ({account.currency})
               </option>
             ))}
           </Select>
@@ -355,12 +471,12 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
                 ?.filter((account) => String(account.id) !== form.account_id)
                 .map((account) => (
                   <option key={account.id} value={account.id}>
-                    {account.name}
+                    {account.name} ({account.currency})
                   </option>
                 ))}
             </Select>
           </div>
-        ) : (
+        ) : form.type === "refund" ? null : (
           <div>
             <div className="flex items-center justify-between">
               <Label htmlFor="category">{t("transactions.form.categoryLabel")}</Label>
@@ -499,6 +615,36 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
           <Label htmlFor="transaction-tags">{t("transactions.form.tagsLabel")}</Label>
           <TagInput value={tags} onChange={setTags} />
         </div>
+
+        {transferMatches.data && transferMatches.data.candidates.length > 0 && (
+          <div className="space-y-2 rounded-md border border-border p-3">
+            <p className="text-xs font-medium text-text-secondary">{t("transactions.form.mergeHint")}</p>
+            {transferMatches.data.candidates.slice(0, 3).map((candidate) => (
+              <div key={candidate.transaction.id} className="flex items-center justify-between gap-2 text-sm">
+                <span className="min-w-0 truncate">
+                  {candidate.transaction.account.name}: {candidate.transaction.description} (
+                  {formatCurrency(candidate.transaction.amount, candidate.transaction.account.currency)})
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={mergeTransferMutation.isPending || !transaction}
+                  onClick={async () => {
+                    if (!transaction) return;
+                    const sourceIsExpense = transaction.type === "expense";
+                    await mergeTransferMutation.mutateAsync({
+                      source_transaction_id: sourceIsExpense ? transaction.id : candidate.transaction.id,
+                      destination_transaction_id: sourceIsExpense ? candidate.transaction.id : transaction.id,
+                    });
+                    onClose();
+                  }}
+                >
+                  {t("transactions.form.mergeButton")}
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {error && <p className="text-sm text-danger">{error}</p>}
 

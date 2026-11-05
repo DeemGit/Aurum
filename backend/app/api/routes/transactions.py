@@ -21,8 +21,19 @@ from app.schemas.transaction import (
     TransactionRead,
     TransactionSplitInput,
     TransactionUpdate,
+    TransferMatchResponse,
+    TransferMatchCandidate,
+    TransferMergeRequest,
+    cashback_rule_violation,
+    normalize_occurred_at,
+    refund_rule_violation,
     split_rule_violation,
     transfer_rule_violation,
+)
+from app.services.transaction_domain import (
+    ensure_refund_target,
+    find_transfer_match_candidates,
+    merge_into_transfer,
 )
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -31,6 +42,7 @@ _EAGER = (
     selectinload(Transaction.account),
     selectinload(Transaction.category),
     selectinload(Transaction.tags),
+    selectinload(Transaction.cashback_category),
     selectinload(Transaction.splits).selectinload(TransactionSplit.category),
 )
 
@@ -100,6 +112,16 @@ async def _build_splits(
     return [TransactionSplit(category_id=s.category_id, amount=s.amount, note=s.note) for s in splits]
 
 
+async def _load_transaction(session: AsyncSession, transaction_id: int) -> Transaction:
+    refreshed = await session.execute(
+        select(Transaction).options(*_EAGER).where(Transaction.id == transaction_id)
+    )
+    transaction = refreshed.scalar_one_or_none()
+    if transaction is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return transaction
+
+
 @router.get("", response_model=TransactionPage)
 async def list_transactions(
     year: int | None = Query(default=None, ge=2000, le=2100),
@@ -132,8 +154,13 @@ async def list_transactions(
         stmt = stmt.where(Transaction.date <= end_date)
         count_stmt = count_stmt.where(Transaction.date <= end_date)
     if account_id is not None:
-        stmt = stmt.where(Transaction.account_id == account_id)
-        count_stmt = count_stmt.where(Transaction.account_id == account_id)
+        # Include transfers that touch the account on either leg.
+        account_filter = or_(
+            Transaction.account_id == account_id,
+            Transaction.transfer_account_id == account_id,
+        )
+        stmt = stmt.where(account_filter)
+        count_stmt = count_stmt.where(account_filter)
     if category_id is not None:
         # A split transaction has category_id=NULL on the row itself — the
         # category lives on its split lines instead, so filtering by exact
@@ -171,7 +198,7 @@ async def list_transactions(
     elif sort == "amount_asc":
         stmt = stmt.order_by(Transaction.amount.asc(), Transaction.id.desc())
     else:
-        stmt = stmt.order_by(Transaction.date.desc(), Transaction.id.desc())
+        stmt = stmt.order_by(Transaction.occurred_at.desc(), Transaction.id.desc())
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
 
     result = await session.execute(stmt)
@@ -193,46 +220,119 @@ async def list_transaction_years(session: AsyncSession = Depends(get_session)) -
     return list(range(min_date.year, max(max_date.year, current_year) + 1))
 
 
+@router.get("/{transaction_id}/transfer-matches", response_model=TransferMatchResponse)
+async def list_transfer_matches(
+    transaction_id: int, session: AsyncSession = Depends(get_session)
+) -> TransferMatchResponse:
+    transaction = await _load_transaction(session, transaction_id)
+    ranked = await find_transfer_match_candidates(session, transaction, eager_options=_EAGER)
+    return TransferMatchResponse(
+        candidates=[
+            TransferMatchCandidate(transaction=candidate, delta_seconds=delta)
+            for candidate, delta in ranked
+        ]
+    )
+
+
+@router.post("/merge-transfer", response_model=TransactionRead, status_code=201)
+async def merge_transfer(
+    payload: TransferMergeRequest, session: AsyncSession = Depends(get_session)
+) -> Transaction:
+    source = await session.get(Transaction, payload.source_transaction_id)
+    destination = await session.get(Transaction, payload.destination_transaction_id)
+    if source is None or destination is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    transfer = await merge_into_transfer(
+        session,
+        source=source,
+        destination=destination,
+        transfer_amount=payload.transfer_amount,
+        exchange_rate=payload.exchange_rate,
+        fee_amount=payload.fee_amount,
+    )
+    return await _load_transaction(session, transfer.id)
+
+
 @router.post("", response_model=TransactionRead, status_code=201)
 async def create_transaction(payload: TransactionCreate, session: AsyncSession = Depends(get_session)) -> Transaction:
     await _ensure_category_matches_type(session, payload.category_id, payload.type)
+    if payload.type == TransactionType.REFUND:
+        await ensure_refund_target(
+            session,
+            refund_of_transaction_id=payload.refund_of_transaction_id,  # type: ignore[arg-type]
+            account_id=payload.account_id,
+            amount=payload.amount,
+        )
     fields = payload.model_dump(exclude={"tag_ids", "splits"})
     transaction = Transaction(**fields)
     transaction.tags = await _resolve_tags(session, payload.tag_ids)
     if payload.splits:
         transaction.splits = await _build_splits(session, payload.splits, payload.type)
     session.add(transaction)
-    await session.commit()
-    refreshed = await session.execute(
-        select(Transaction).options(*_EAGER).where(Transaction.id == transaction.id)
-    )
-    return refreshed.scalar_one()
+    try:
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        # Unique (account_id, import_hash) — treat as a client-visible conflict.
+        if payload.import_hash and "uq_transactions_account_import_hash" in str(exc):
+            raise HTTPException(status_code=409, detail="Duplicate import_hash for this account") from exc
+        raise
+    return await _load_transaction(session, transaction.id)
 
 
 @router.post("/bulk", response_model=TransactionBulkCreateResult, status_code=201)
 async def bulk_create_transactions(
     payload: TransactionBulkCreate, session: AsyncSession = Depends(get_session)
 ) -> TransactionBulkCreateResult:
-    """CSV import lands here — see schemas.TransactionBulkCreate. All rows
-    are validated before any is added, so a bad row 400s the whole request
-    instead of leaving a half-imported statement behind."""
+    """CSV import lands here — see schemas.TransactionBulkCreate. Bad rows
+    still 400 the whole request; rows whose import_hash already exists on
+    the account are skipped instead of aborting."""
     for item in payload.items:
         await _ensure_category_matches_type(session, item.category_id, item.type)
+        if item.type == TransactionType.REFUND:
+            await ensure_refund_target(
+                session,
+                refund_of_transaction_id=item.refund_of_transaction_id,  # type: ignore[arg-type]
+                account_id=item.account_id,
+                amount=item.amount,
+            )
+
+    hashes_by_account: dict[int, set[str]] = {}
+    for item in payload.items:
+        if item.import_hash:
+            hashes_by_account.setdefault(item.account_id, set()).add(item.import_hash)
+
+    existing_hashes: set[tuple[int, str]] = set()
+    for account_id, hashes in hashes_by_account.items():
+        rows = await session.execute(
+            select(Transaction.account_id, Transaction.import_hash).where(
+                Transaction.account_id == account_id,
+                Transaction.import_hash.in_(hashes),
+            )
+        )
+        existing_hashes.update((row[0], row[1]) for row in rows.all() if row[1])
 
     transactions = []
+    skipped = 0
+    seen_in_batch: set[tuple[int, str]] = set()
     for item in payload.items:
+        if item.import_hash:
+            key = (item.account_id, item.import_hash)
+            if key in existing_hashes or key in seen_in_batch:
+                skipped += 1
+                continue
+            seen_in_batch.add(key)
         transaction = Transaction(**item.model_dump(exclude={"tag_ids", "splits"}))
         transaction.tags = await _resolve_tags(session, item.tag_ids)
         if item.splits:
             transaction.splits = await _build_splits(session, item.splits, item.type)
         transactions.append(transaction)
 
-    session.add_all(transactions)
-    await session.commit()
-    # One request can add thousands of rows (CSV import) — worth a line so an
-    # unexpected pile of transactions can be dated later.
-    log_destructive("transactions.bulk_created", count=len(transactions))
-    return TransactionBulkCreateResult(created=len(transactions))
+    if transactions:
+        session.add_all(transactions)
+        await session.commit()
+        log_destructive("transactions.bulk_created", count=len(transactions), skipped_duplicates=skipped)
+    return TransactionBulkCreateResult(created=len(transactions), skipped_duplicates=skipped)
 
 
 @router.patch("/{transaction_id}", response_model=TransactionRead)
@@ -244,7 +344,9 @@ async def update_transaction(
     # against, which async SQLAlchemy can't do outside an explicit await
     # (MissingGreenlet).
     transaction = await session.get(
-        Transaction, transaction_id, options=[selectinload(Transaction.tags), selectinload(Transaction.splits)]
+        Transaction,
+        transaction_id,
+        options=[selectinload(Transaction.tags), selectinload(Transaction.splits)],
     )
     if transaction is None:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -256,7 +358,20 @@ async def update_transaction(
     effective_category_id = updates.get("category_id", transaction.category_id)
     effective_account_id = updates.get("account_id", transaction.account_id)
     effective_transfer_account_id = updates.get("transfer_account_id", transaction.transfer_account_id)
+    effective_refund_of = updates.get("refund_of_transaction_id", transaction.refund_of_transaction_id)
     effective_amount = updates.get("amount", transaction.amount)
+    effective_cashback_category_id = updates.get("cashback_category_id", transaction.cashback_category_id)
+    effective_cashback_amount = updates.get("cashback_amount", transaction.cashback_amount)
+    effective_is_cashback = updates.get("is_cashback", transaction.is_cashback)
+
+    if "occurred_at" in updates or "date" in updates:
+        date_value, occurred_at = normalize_occurred_at(
+            date=updates.get("date", transaction.date if "occurred_at" not in updates else None),
+            occurred_at=updates.get("occurred_at", transaction.occurred_at if "date" not in updates else None),
+        )
+        updates["date"] = date_value
+        updates["occurred_at"] = occurred_at
+
     await _ensure_category_matches_type(session, effective_category_id, effective_type)
     violation = transfer_rule_violation(
         type=effective_type,
@@ -266,6 +381,38 @@ async def update_transaction(
     )
     if violation:
         raise HTTPException(status_code=400, detail=violation)
+    refund_violation = refund_rule_violation(
+        type=effective_type,
+        refund_of_transaction_id=effective_refund_of,
+        category_id=effective_category_id,
+        transfer_account_id=effective_transfer_account_id,
+    )
+    if refund_violation:
+        raise HTTPException(status_code=400, detail=refund_violation)
+    cashback_violation = cashback_rule_violation(
+        type=effective_type,
+        cashback_category_id=effective_cashback_category_id,
+        cashback_amount=effective_cashback_amount,
+        is_cashback=bool(effective_is_cashback),
+    )
+    if cashback_violation:
+        raise HTTPException(status_code=400, detail=cashback_violation)
+
+    if effective_type == TransactionType.TRANSFER:
+        # Becoming a transfer always clears cashback (merge path does the same).
+        updates["cashback_category_id"] = None
+        updates["cashback_amount"] = None
+        updates["is_cashback"] = False
+        if updates.get("transfer_amount", transaction.transfer_amount) is None and "transfer_amount" not in updates:
+            updates["transfer_amount"] = effective_amount
+    if effective_type == TransactionType.REFUND:
+        await ensure_refund_target(
+            session,
+            refund_of_transaction_id=effective_refund_of,  # type: ignore[arg-type]
+            account_id=effective_account_id,
+            amount=effective_amount,
+            exclude_refund_id=transaction_id,
+        )
 
     if payload.splits is not None:
         split_count = len(payload.splits)
@@ -297,10 +444,7 @@ async def update_transaction(
     if payload.splits is not None:
         transaction.splits = await _build_splits(session, payload.splits, effective_type)
     await session.commit()
-    refreshed = await session.execute(
-        select(Transaction).options(*_EAGER).where(Transaction.id == transaction_id)
-    )
-    return refreshed.scalar_one()
+    return await _load_transaction(session, transaction_id)
 
 
 @router.delete("/{transaction_id}", status_code=204)

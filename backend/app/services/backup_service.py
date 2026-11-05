@@ -231,9 +231,18 @@ async def restore_backup(session: AsyncSession, payload: BackupPayload) -> None:
         # transient object — reassigning it after flush (below) would
         # otherwise trigger an implicit lazy-load, which async SQLAlchemy
         # can't do outside an explicit await (MissingGreenlet).
-        transactions_by_id = {
-            row.id: Transaction(**row.model_dump(exclude={"tag_ids"}), tags=[]) for row in payload.transactions
-        }
+        from app.models.enums import TransactionType
+
+        transactions_by_id = {}
+        for row in payload.transactions:
+            data = row.model_dump(exclude={"tag_ids"})
+            # Old backups lack occurred_at — fill midnight UTC from date.
+            if data.get("occurred_at") is None:
+                day = data["date"]
+                data["occurred_at"] = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+            if data.get("type") == TransactionType.TRANSFER and data.get("transfer_amount") is None:
+                data["transfer_amount"] = data["amount"]
+            transactions_by_id[row.id] = Transaction(**data, tags=[])
         session.add_all(transactions_by_id.values())
         session.add_all(TransactionSplit(**row.model_dump()) for row in payload.transaction_splits)
 

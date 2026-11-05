@@ -98,24 +98,35 @@ async def _idle_cash_account_count(session: AsyncSession, threshold_amount: Deci
     # never stored, only ever summed from the full transaction history — plus
     # tracking the most recent date that touched each account along the way.
     rows = await session.execute(
-        select(Transaction.type, Transaction.amount, Transaction.account_id, Transaction.transfer_account_id, Transaction.date)
+        select(
+            Transaction.type,
+            Transaction.amount,
+            Transaction.transfer_amount,
+            Transaction.fee_amount,
+            Transaction.account_id,
+            Transaction.transfer_account_id,
+            Transaction.date,
+        )
     )
     balances: dict[int, Decimal] = defaultdict(Decimal)
     last_activity: dict[int, date] = {}
+
+    from app.services.money_effects import apply_balance_delta
 
     def touch(account_id: int | None, tx_date: date) -> None:
         if account_id in eligible_ids and (account_id not in last_activity or tx_date > last_activity[account_id]):
             last_activity[account_id] = tx_date
 
-    for tx_type, amount, account_id, transfer_account_id, tx_date in rows.all():
-        if tx_type == TransactionType.INCOME:
-            balances[account_id] += amount
-        elif tx_type == TransactionType.EXPENSE:
-            balances[account_id] -= amount
-        elif tx_type == TransactionType.TRANSFER:
-            balances[account_id] -= amount
-            if transfer_account_id is not None:
-                balances[transfer_account_id] += amount
+    for tx_type, amount, transfer_amount, fee_amount, account_id, transfer_account_id, tx_date in rows.all():
+        apply_balance_delta(
+            balances,
+            tx_type=tx_type,
+            amount=amount,
+            transfer_amount=transfer_amount,
+            fee_amount=fee_amount,
+            account_id=account_id,
+            transfer_account_id=transfer_account_id,
+        )
         touch(account_id, tx_date)
         touch(transfer_account_id, tx_date)
 

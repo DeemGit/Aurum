@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Archive, ArchiveRestore, Banknote, CreditCard, Package, Pencil, PiggyBank, TrendingUp, Trash2, Wallet, type LucideIcon } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
@@ -39,23 +40,28 @@ export function AccountList({ items, onEdit, onToggleArchived, onDelete }: Accou
               <Icon size={16} className="text-text-secondary" />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="flex items-center gap-1.5 truncate text-sm font-medium text-text-primary">
-                {account.name}
-                {account.is_archived && (
-                  <span className="shrink-0 rounded bg-surface-2 px-1 py-0.5 text-[10px] leading-none text-text-muted">
-                    {t("account.archivedBadge")}
-                  </span>
-                )}
-              </span>
-              <span className="block truncate text-xs text-text-muted">
-                {t(`account.type.${account.type}` as TranslationKey)}
-              </span>
+              <Link
+                to={`/transactions?account_id=${account.id}`}
+                className="flex min-w-0 flex-col hover:opacity-80"
+              >
+                <span className="flex items-center gap-1.5 truncate text-sm font-medium text-text-primary">
+                  {account.name}
+                  {account.is_archived && (
+                    <span className="shrink-0 rounded bg-surface-2 px-1 py-0.5 text-[10px] leading-none text-text-muted">
+                      {t("account.archivedBadge")}
+                    </span>
+                  )}
+                </span>
+                <span className="block truncate text-xs text-text-muted">
+                  {t(`account.type.${account.type}` as TranslationKey)} · {account.currency}
+                </span>
+              </Link>
             </span>
             <span
               className="shrink-0 text-sm font-medium tabular-nums"
               style={{ color: balance < 0 ? "var(--danger)" : "var(--text-primary)" }}
             >
-              {formatCurrency(balance)}
+              {formatCurrency(balance, account.currency)}
             </span>
             <span className="flex shrink-0 gap-1">
               <button

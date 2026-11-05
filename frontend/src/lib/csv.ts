@@ -70,12 +70,19 @@ const DATE_PATTERNS: Record<DateFormat, { regex: RegExp; order: ["y" | "m" | "d"
   "DD-MM-YYYY": { regex: new RegExp(/^(\d{1,2})-(\d{1,2})-(\d{4})/.source + TIME_SUFFIX), order: ["d", "m", "y"] },
 };
 
-/** Parses `raw` per `format`, returning an ISO "YYYY-MM-DD" string, or null
+export interface ParsedDateTime {
+  date: string;
+  /** ISO timestamptz when the bank row included a time; otherwise midnight UTC. */
+  occurred_at: string;
+}
+
+/** Parses `raw` per `format`, returning calendar date + occurred_at, or null
  * if it doesn't match the pattern or isn't a real calendar date (e.g. Feb 30
  * round-trips to Mar 2, which this catches by re-checking the parts). */
-export function parseDateWithFormat(raw: string, format: DateFormat): string | null {
+export function parseDateTimeWithFormat(raw: string, format: DateFormat): ParsedDateTime | null {
   const { regex, order } = DATE_PATTERNS[format];
-  const match = raw.trim().match(regex);
+  const trimmed = raw.trim();
+  const match = trimmed.match(regex);
   if (!match) return null;
 
   const parts: Record<"y" | "m" | "d", number> = { y: 0, m: 0, d: 0 };
@@ -88,7 +95,43 @@ export function parseDateWithFormat(raw: string, format: DateFormat): string | n
   const date = new Date(year, month - 1, day);
   if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
 
-  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  const dateIso = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  const timeMatch = trimmed.match(/(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)$/);
+  const hh = timeMatch ? String(Number(timeMatch[1])).padStart(2, "0") : "00";
+  const mm = timeMatch ? timeMatch[2] : "00";
+  const ss = timeMatch?.[3] ? timeMatch[3] : "00";
+  return { date: dateIso, occurred_at: `${dateIso}T${hh}:${mm}:${ss}+00:00` };
+}
+
+/** Parses `raw` per `format`, returning an ISO "YYYY-MM-DD" string, or null. */
+export function parseDateWithFormat(raw: string, format: DateFormat): string | null {
+  return parseDateTimeWithFormat(raw, format)?.date ?? null;
+}
+
+/** SHA-256 hex digest of a stable import-row canon for re-import dedupe. */
+export async function computeImportHash(parts: {
+  accountId: number;
+  date: string;
+  occurredAt: string;
+  amount: string;
+  description: string;
+  merchant?: string;
+  presetId?: string;
+}): Promise<string> {
+  const canon = [
+    String(parts.accountId),
+    parts.date,
+    parts.occurredAt,
+    parts.amount,
+    parts.description.trim().toLowerCase(),
+    (parts.merchant ?? "").trim().toLowerCase(),
+    parts.presetId ?? "",
+  ].join("|");
+  const bytes = new TextEncoder().encode(canon);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 export const AMOUNT_FORMATS = ["auto", "dot-decimal", "comma-decimal"] as const;

@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.category import Category
 from app.models.enums import TransactionType
 from app.models.transaction import Transaction, TransactionSplit
+from app.services.money_effects import refund_total_for_expense_ids
 
 
 @dataclass
@@ -109,6 +110,19 @@ async def rollup_spending_by_top_level_category(
     if not contributions:
         return []
 
+    # Refunds reduce spending in the *purchase* month (original expense date),
+    # not the refund's own month — see docs/MULTICURRENCY_DESIGN.md.
+    refund_totals: dict[int, Decimal] = {}
+    expense_amounts: dict[int, Decimal] = {}
+    if transaction_type == TransactionType.EXPENSE:
+        expense_ids = {txn_id for txn_id, _, _ in contributions}
+        refund_totals = await refund_total_for_expense_ids(session, expense_ids)
+        if refund_totals:
+            amount_rows = await session.execute(
+                select(Transaction.id, Transaction.amount).where(Transaction.id.in_(expense_ids))
+            )
+            expense_amounts = {row[0]: row[1] for row in amount_rows.all()}
+
     categories_by_id = {c.id: c for c in (await session.execute(select(Category))).scalars().all()}
 
     amount_by_effective: dict[int, Decimal] = defaultdict(Decimal)
@@ -118,10 +132,18 @@ async def rollup_spending_by_top_level_category(
     # filed directly on the parent, and a genuine child id otherwise.
     amount_by_leaf: dict[int, dict[int, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
     for transaction_id, category_id, amount in contributions:
+        net_amount = amount
+        refunded = refund_totals.get(transaction_id, Decimal("0"))
+        original_total = expense_amounts.get(transaction_id)
+        if refunded and original_total and original_total > 0:
+            # Proportional share of the refund across this expense's categories.
+            net_amount = amount - (amount / original_total) * refunded
+        if net_amount <= 0:
+            continue
         category = categories_by_id.get(category_id)
         effective_id = category.parent_id if category and category.parent_id is not None else category_id
-        amount_by_effective[effective_id] += amount
-        amount_by_leaf[effective_id][category_id] += amount
+        amount_by_effective[effective_id] += net_amount
+        amount_by_leaf[effective_id][category_id] += net_amount
         txn_ids_by_effective[effective_id].add(transaction_id)
 
     items: list[CategoryRollupItem] = []

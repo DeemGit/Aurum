@@ -1,6 +1,6 @@
 export type AccountType = "checking" | "debit_card" | "savings" | "credit_card" | "cash" | "investment" | "other";
 export type CategoryKind = "income" | "expense";
-export type TransactionType = "income" | "expense" | "transfer";
+export type TransactionType = "income" | "expense" | "transfer" | "refund";
 export type RecurringFrequency = "weekly" | "monthly" | "yearly";
 
 export interface Account {
@@ -24,6 +24,7 @@ export interface AccountWithBalance extends Account {
 export interface AccountInput {
   name: string;
   type: AccountType;
+  currency: string;
 }
 
 export interface Category {
@@ -81,19 +82,35 @@ export interface TransactionSplitInput {
   note?: string | null;
 }
 
+export interface CashbackCategory {
+  id: number;
+  name: string;
+  color: string | null;
+}
+
 export interface Transaction {
   id: number;
   account_id: number;
   category_id: number | null;
   transfer_account_id: number | null;
+  refund_of_transaction_id: number | null;
   type: TransactionType;
   amount: string;
+  transfer_amount: string | null;
+  exchange_rate: string | null;
+  fee_amount: string;
   description: string;
   merchant: string | null;
   notes: string | null;
   date: string;
+  occurred_at: string;
+  import_hash: string | null;
+  cashback_category_id: number | null;
+  cashback_amount: string | null;
+  is_cashback: boolean;
   account: Account;
   category: Category | null;
+  cashback_category: CashbackCategory | null;
   tags: Tag[];
   splits: TransactionSplit[];
 }
@@ -109,12 +126,21 @@ export interface TransactionInput {
   account_id: number;
   category_id: number | null;
   transfer_account_id: number | null;
+  refund_of_transaction_id?: number | null;
   type: TransactionType;
   amount: string;
+  transfer_amount?: string | null;
+  exchange_rate?: string | null;
+  fee_amount?: string;
   description: string;
   merchant?: string | null;
   notes?: string | null;
-  date: string;
+  date?: string;
+  occurred_at?: string;
+  import_hash?: string | null;
+  cashback_category_id?: number | null;
+  cashback_amount?: string | null;
+  is_cashback?: boolean;
   // Omitted -> tags untouched on update; sent (even as []) -> replaces the
   // full tag set. Always sent on create (defaults to []).
   tag_ids?: number[];

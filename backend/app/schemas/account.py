@@ -17,9 +17,9 @@ class AccountCreate(AccountBase):
 
 
 class AccountUpdate(BaseModel):
+    # currency is immutable after create — intentionally omitted (see account_service.update_account).
     name: str | None = Field(default=None, min_length=1, max_length=100)
     type: AccountType | None = None
-    currency: str | None = Field(default=None, min_length=3, max_length=3)
     color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     is_archived: bool | None = None
 

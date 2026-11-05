@@ -57,12 +57,23 @@ class TransactionBackup(BaseModel):
     account_id: int
     category_id: int | None
     transfer_account_id: int | None
+    refund_of_transaction_id: int | None = None
     type: TransactionType
     amount: Decimal
+    transfer_amount: Decimal | None = None
+    exchange_rate: Decimal | None = None
+    fee_amount: Decimal = Decimal("0")
     description: str
     merchant: str | None
     notes: str | None
     date: date_
+    # Defaulted for backups exported before occurred_at existed — restore
+    # fills midnight UTC from date when omitted.
+    occurred_at: datetime | None = None
+    import_hash: str | None = None
+    cashback_category_id: int | None = None
+    cashback_amount: Decimal | None = None
+    is_cashback: bool = False
     # Defaulted so a backup exported before tags existed still imports
     # cleanly under the same format version. Not a plain column — populated
     # explicitly in build_backup() from the `tags` relationship, since
@@ -190,6 +201,9 @@ class RecurringTransactionBackup(BaseModel):
     transfer_account_id: int | None
     type: TransactionType
     amount: Decimal
+    transfer_amount: Decimal | None = None
+    exchange_rate: Decimal | None = None
+    fee_amount: Decimal = Decimal("0")
     description: str
     merchant: str | None
     notes: str | None

@@ -66,7 +66,29 @@ async def get_category_spending_report(
 
     plain_rows = (await session.execute(plain_stmt)).all()
     split_rows = (await session.execute(split_stmt)).all()
-    contributions = [(r[0], r[1], r[2]) for r in plain_rows] + [(r[0], r[1], r[2]) for r in split_rows]
+    raw_contributions = [(r[0], r[1], r[2]) for r in plain_rows] + [(r[0], r[1], r[2]) for r in split_rows]
+
+    from app.services.money_effects import refund_total_for_expense_ids
+
+    expense_ids = {txn_id for txn_id, _, _ in raw_contributions}
+    refund_totals = await refund_total_for_expense_ids(session, expense_ids)
+    expense_amounts = {}
+    if expense_ids:
+        expense_amounts = {
+            row[0]: row[1]
+            for row in (
+                await session.execute(select(Transaction.id, Transaction.amount).where(Transaction.id.in_(expense_ids)))
+            ).all()
+        }
+    contributions: list[tuple[int, date_, Decimal]] = []
+    for transaction_id, txn_date, amount in raw_contributions:
+        net_amount = amount
+        refunded = refund_totals.get(transaction_id, Decimal("0"))
+        original_total = expense_amounts.get(transaction_id)
+        if refunded and original_total and original_total > 0:
+            net_amount = amount - (amount / original_total) * refunded
+        if net_amount > 0:
+            contributions.append((transaction_id, txn_date, net_amount))
 
     empty = CategorySpendingReport(
         category_id=category.id,

@@ -9,6 +9,7 @@ import { AccountsPage } from "@/pages/AccountsPage";
 import { AdvicePage } from "@/pages/AdvicePage";
 import { BudgetPage } from "@/pages/BudgetPage";
 import { CashFlowPage } from "@/pages/CashFlowPage";
+import { CashbackPage } from "@/pages/CashbackPage";
 import { CategoriesPage } from "@/pages/CategoriesPage";
 import { CryptoPage } from "@/pages/CryptoPage";
 import { CsvImportPage } from "@/pages/CsvImportPage";
@@ -60,6 +61,7 @@ export default function App() {
             <Route path="/transactions" element={<TransactionsPage />} />
             <Route path="/transactions/import" element={<CsvImportPage />} />
             <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/cashback" element={<CashbackPage />} />
             <Route path="/budget" element={<BudgetPage />} />
             <Route path="/advice" element={<AdvicePage />} />
             <Route path="/goals" element={<GoalsPage />} />

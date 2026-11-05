@@ -9,6 +9,7 @@ import { YearSelector } from "@/components/layout/YearSelector";
 import { TransactionsTable } from "@/components/transactions/TransactionsTable";
 import { TransactionFormModal } from "@/components/transactions/TransactionFormModal";
 import { useTransactions, useDeleteTransaction, useTransactionYears } from "@/hooks/useTransactions";
+import { useAccounts } from "@/hooks/useAccounts";
 import { useCategories } from "@/hooks/useCategories";
 import { useTags } from "@/hooks/useTags";
 import type { TransactionSort } from "@/api/transactions";
@@ -43,6 +44,7 @@ export function TransactionsPage() {
   const [searchParams] = useSearchParams();
   const [year, setYear] = useState(() => parseYearParam(searchParams.get("year"), now.getFullYear()));
   const [month, setMonth] = useState(() => parseMonthParam(searchParams.get("month"), now.getMonth() + 1));
+  const [accountId, setAccountId] = useState(() => searchParams.get("account_id") ?? "");
   const [type, setType] = useState<TransactionType | "">("");
   const [categoryId, setCategoryId] = useState<string>("");
   const [tagId, setTagId] = useState<string>("");
@@ -65,6 +67,7 @@ export function TransactionsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
 
+  const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
   const { data: tags } = useTags();
   const { data: years } = useTransactionYears();
@@ -74,6 +77,7 @@ export function TransactionsPage() {
     year: isSearching ? undefined : year,
     month: isSearching ? undefined : month,
     search: isSearching ? search : undefined,
+    account_id: accountId ? Number(accountId) : undefined,
     type: type || undefined,
     category_id: categoryId ? Number(categoryId) : undefined,
     tag_id: tagId ? Number(tagId) : undefined,
@@ -187,7 +191,22 @@ export function TransactionsPage() {
       </div>
       {isSearching && <p className="text-xs text-text-muted">{t("transactions.searchAcrossAllTime")}</p>}
 
-      <div className="flex flex-col gap-3 sm:flex-row">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+        <Select
+          value={accountId}
+          onChange={(event) => {
+            setAccountId(event.target.value);
+            setPage(1);
+          }}
+          className="sm:w-56"
+        >
+          <option value="">{t("transactions.allAccounts")}</option>
+          {(accounts ?? []).map((account) => (
+            <option key={account.id} value={account.id}>
+              {account.name} ({account.currency})
+            </option>
+          ))}
+        </Select>
         <Select
           value={type}
           onChange={(event) => {
@@ -200,6 +219,7 @@ export function TransactionsPage() {
           <option value="expense">{t("transactions.expense")}</option>
           <option value="income">{t("transactions.income")}</option>
           <option value="transfer">{t("transactions.transfer")}</option>
+          <option value="refund">{t("transactions.refund")}</option>
         </Select>
         <Select
           value={categoryId}

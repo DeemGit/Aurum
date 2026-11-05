@@ -1,4 +1,5 @@
 from datetime import date as date_
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -39,6 +40,57 @@ def transfer_rule_violation(
     return None
 
 
+def refund_rule_violation(
+    *,
+    type: TransactionType,
+    refund_of_transaction_id: int | None,
+    category_id: int | None,
+    transfer_account_id: int | None,
+) -> str | None:
+    if type == TransactionType.REFUND:
+        if not refund_of_transaction_id:
+            return "refund_of_transaction_id is required for refund transactions"
+        if category_id:
+            return "category_id is not valid for refund transactions"
+        if transfer_account_id:
+            return "transfer_account_id is not valid for refund transactions"
+    elif refund_of_transaction_id:
+        return "refund_of_transaction_id is only valid for refund transactions"
+    return None
+
+
+def cashback_rule_violation(
+    *,
+    type: TransactionType,
+    cashback_category_id: int | None,
+    cashback_amount: Decimal | None,
+    is_cashback: bool,
+) -> str | None:
+    if type == TransactionType.TRANSFER:
+        if cashback_category_id is not None or cashback_amount is not None:
+            return "cashback fields are not valid for transfer transactions"
+        if is_cashback:
+            return "is_cashback is not valid for transfer transactions"
+    if type == TransactionType.REFUND:
+        if is_cashback:
+            return "is_cashback is not valid for refund transactions"
+    if is_cashback and type != TransactionType.INCOME:
+        return "is_cashback is only valid for income transactions"
+    if type not in (TransactionType.EXPENSE, TransactionType.REFUND) and cashback_category_id is not None:
+        if type != TransactionType.INCOME:
+            return "cashback_category_id is only valid for expense or refund transactions"
+    if type == TransactionType.INCOME and cashback_category_id is not None:
+        return "cashback_category_id is not valid for income transactions"
+    if type not in (TransactionType.REFUND, TransactionType.EXPENSE) and cashback_amount is not None:
+        if type != TransactionType.INCOME:
+            return "cashback_amount is only valid for refund (or omitted) transactions"
+    if type == TransactionType.EXPENSE and cashback_amount is not None:
+        return "cashback_amount is not set on expense — use cashback_category_id and monthly rates"
+    if type == TransactionType.INCOME and cashback_amount is not None:
+        return "cashback_amount is not valid for income — use is_cashback"
+    return None
+
+
 def split_rule_violation(
     *,
     type: TransactionType,
@@ -59,8 +111,8 @@ def split_rule_violation(
     """
     if split_count == 0:
         return None
-    if type == TransactionType.TRANSFER:
-        return "splits are not valid for transfer transactions"
+    if type in (TransactionType.TRANSFER, TransactionType.REFUND):
+        return f"splits are not valid for {type.value} transactions"
     if category_id is not None:
         return "category_id must be omitted when splitting a transaction across categories"
     if split_count < 2:
@@ -68,6 +120,19 @@ def split_rule_violation(
     if split_total != amount:
         return f"split amounts ({split_total}) must add up to the transaction amount ({amount})"
     return None
+
+
+def normalize_occurred_at(*, date: date_ | None, occurred_at: datetime | None) -> tuple[date_, datetime]:
+    """Derive the (date, occurred_at) pair from whichever side the client sent."""
+    if occurred_at is not None:
+        if occurred_at.tzinfo is None:
+            occurred_at = occurred_at.replace(tzinfo=timezone.utc)
+        else:
+            occurred_at = occurred_at.astimezone(timezone.utc)
+        return occurred_at.date(), occurred_at
+    if date is None:
+        raise ValueError("date or occurred_at is required")
+    return date, datetime(date.year, date.month, date.day, tzinfo=timezone.utc)
 
 
 class TransactionFields(BaseModel):
@@ -82,12 +147,21 @@ class TransactionFields(BaseModel):
     account_id: int
     category_id: int | None = None
     transfer_account_id: int | None = None
+    refund_of_transaction_id: int | None = None
     type: TransactionType
     amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    transfer_amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    exchange_rate: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=8)
+    fee_amount: Decimal = Field(default=Decimal("0"), ge=0, max_digits=14, decimal_places=2)
     description: str = Field(min_length=1, max_length=255)
     merchant: str | None = Field(default=None, max_length=150)
     notes: str | None = Field(default=None, max_length=2000)
     date: date_
+    occurred_at: datetime
+    import_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    cashback_category_id: int | None = None
+    cashback_amount: Decimal | None = Field(default=None, max_digits=14, decimal_places=2)
+    is_cashback: bool = False
 
     # Auto-capitalizes "траты на продукты" -> "Траты на продукты" so mixed
     # casing from quick manual entry doesn't need fixing by hand later.
@@ -96,13 +170,62 @@ class TransactionFields(BaseModel):
     def _capitalize_description(cls, value: str) -> str:
         return capitalize_first_letter(value)
 
+    @field_validator("import_hash")
+    @classmethod
+    def _normalize_import_hash(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if len(normalized) != 64 or any(c not in "0123456789abcdef" for c in normalized):
+            raise ValueError("import_hash must be a 64-character lowercase hex SHA-256 digest")
+        return normalized
 
-class TransactionBase(TransactionFields):
+
+class TransactionBase(BaseModel):
     """The write-side shape: the fields plus the invariants a new or edited
-    row has to satisfy."""
+    row has to satisfy. date/occurred_at are optional individually — at least
+    one must be present and the pair is normalized in the validator."""
+
+    account_id: int
+    category_id: int | None = None
+    transfer_account_id: int | None = None
+    refund_of_transaction_id: int | None = None
+    type: TransactionType
+    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    transfer_amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    exchange_rate: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=8)
+    fee_amount: Decimal = Field(default=Decimal("0"), ge=0, max_digits=14, decimal_places=2)
+    description: str = Field(min_length=1, max_length=255)
+    merchant: str | None = Field(default=None, max_length=150)
+    notes: str | None = Field(default=None, max_length=2000)
+    date: date_ | None = None
+    occurred_at: datetime | None = None
+    import_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    cashback_category_id: int | None = None
+    cashback_amount: Decimal | None = Field(default=None, max_digits=14, decimal_places=2)
+    is_cashback: bool = False
+
+    @field_validator("description")
+    @classmethod
+    def _capitalize_description(cls, value: str) -> str:
+        return capitalize_first_letter(value)
+
+    @field_validator("import_hash")
+    @classmethod
+    def _normalize_import_hash(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if len(normalized) != 64 or any(c not in "0123456789abcdef" for c in normalized):
+            raise ValueError("import_hash must be a 64-character lowercase hex SHA-256 digest")
+        return normalized
 
     @model_validator(mode="after")
     def _validate_type_specific_fields(self) -> "TransactionBase":
+        date_value, occurred_at = normalize_occurred_at(date=self.date, occurred_at=self.occurred_at)
+        self.date = date_value
+        self.occurred_at = occurred_at
+
         violation = transfer_rule_violation(
             type=self.type,
             account_id=self.account_id,
@@ -111,6 +234,38 @@ class TransactionBase(TransactionFields):
         )
         if violation:
             raise ValueError(violation)
+        refund_violation = refund_rule_violation(
+            type=self.type,
+            refund_of_transaction_id=self.refund_of_transaction_id,
+            category_id=self.category_id,
+            transfer_account_id=self.transfer_account_id,
+        )
+        if refund_violation:
+            raise ValueError(refund_violation)
+        cashback_violation = cashback_rule_violation(
+            type=self.type,
+            cashback_category_id=self.cashback_category_id,
+            cashback_amount=self.cashback_amount,
+            is_cashback=self.is_cashback,
+        )
+        if cashback_violation:
+            raise ValueError(cashback_violation)
+
+        if self.type == TransactionType.TRANSFER:
+            # Cashback is never kept on a transfer (merge path clears it too).
+            self.cashback_category_id = None
+            self.cashback_amount = None
+            self.is_cashback = False
+            if self.transfer_amount is None:
+                self.transfer_amount = self.amount
+        else:
+            if self.transfer_amount is not None or self.exchange_rate is not None:
+                raise ValueError("transfer_amount/exchange_rate are only valid for transfer transactions")
+            if self.fee_amount and self.fee_amount != 0:
+                raise ValueError("fee_amount is only valid for transfer transactions")
+            self.transfer_amount = None
+            self.exchange_rate = None
+            self.fee_amount = Decimal("0")
         return self
 
 
@@ -148,12 +303,21 @@ class TransactionUpdate(BaseModel):
     account_id: int | None = None
     category_id: int | None = None
     transfer_account_id: int | None = None
+    refund_of_transaction_id: int | None = None
     type: TransactionType | None = None
     amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    transfer_amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    exchange_rate: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=8)
+    fee_amount: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     description: str | None = Field(default=None, min_length=1, max_length=255)
     merchant: str | None = Field(default=None, max_length=150)
     notes: str | None = Field(default=None, max_length=2000)
     date: date_ | None = None
+    occurred_at: datetime | None = None
+    import_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    cashback_category_id: int | None = None
+    cashback_amount: Decimal | None = Field(default=None, max_digits=14, decimal_places=2)
+    is_cashback: bool | None = None
     # Omitted -> tags untouched; sent (even as []) -> replaces the full tag set.
     tag_ids: list[int] | None = None
     # Omitted -> splits untouched; sent (even as []) -> replaces the full
@@ -165,6 +329,24 @@ class TransactionUpdate(BaseModel):
     @classmethod
     def _capitalize_description(cls, value: str | None) -> str | None:
         return capitalize_first_letter(value) if value is not None else None
+
+    @field_validator("import_hash")
+    @classmethod
+    def _normalize_import_hash(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if len(normalized) != 64 or any(c not in "0123456789abcdef" for c in normalized):
+            raise ValueError("import_hash must be a 64-character lowercase hex SHA-256 digest")
+        return normalized
+
+
+class CashbackCategoryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    color: str | None = None
 
 
 class TransactionSplitRead(BaseModel):
@@ -183,6 +365,7 @@ class TransactionRead(TransactionFields):
     id: int
     account: AccountRead
     category: CategoryRead | None = None
+    cashback_category: CashbackCategoryRead | None = None
     tags: list[TagRead] = Field(default_factory=list)
     splits: list[TransactionSplitRead] = Field(default_factory=list)
 
@@ -197,11 +380,30 @@ class TransactionPage(BaseModel):
 class TransactionBulkCreate(BaseModel):
     """CSV import (see routes/transactions.py's /bulk): the frontend parses
     the file and maps its columns client-side, then sends already-shaped
-    rows here. All-or-nothing — same failure semantics as backup restore, so
-    a single bad row never leaves a partial import behind."""
+    rows here. Validation still fails the whole request on a bad row, but
+    rows whose import_hash already exists on the account are skipped rather
+    than aborting the batch."""
 
     items: list[TransactionCreate] = Field(min_length=1, max_length=5000)
 
 
 class TransactionBulkCreateResult(BaseModel):
     created: int
+    skipped_duplicates: int = 0
+
+
+class TransferMatchCandidate(BaseModel):
+    transaction: TransactionRead
+    delta_seconds: int
+
+
+class TransferMatchResponse(BaseModel):
+    candidates: list[TransferMatchCandidate]
+
+
+class TransferMergeRequest(BaseModel):
+    source_transaction_id: int
+    destination_transaction_id: int
+    exchange_rate: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=8)
+    fee_amount: Decimal = Field(default=Decimal("0"), ge=0, max_digits=14, decimal_places=2)
+    transfer_amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)

@@ -56,10 +56,26 @@ export function createTransaction(input: TransactionInput) {
   return api.post<Transaction>("/transactions", input);
 }
 
-/** CSV import — see pages/CsvImportPage.tsx. All-or-nothing on the backend:
- * either every row is created, or (on a validation error) none are. */
+/** CSV import — see pages/CsvImportPage.tsx. Validation still fails the whole
+ * request on a bad row; rows whose import_hash already exists are skipped. */
 export function bulkCreateTransactions(items: TransactionInput[]) {
-  return api.post<{ created: number }>("/transactions/bulk", { items });
+  return api.post<{ created: number; skipped_duplicates: number }>("/transactions/bulk", { items });
+}
+
+export function fetchTransferMatches(transactionId: number) {
+  return api.get<{ candidates: { transaction: Transaction; delta_seconds: number }[] }>(
+    `/transactions/${transactionId}/transfer-matches`
+  );
+}
+
+export function mergeTransfer(payload: {
+  source_transaction_id: number;
+  destination_transaction_id: number;
+  transfer_amount?: string;
+  exchange_rate?: string;
+  fee_amount?: string;
+}) {
+  return api.post<Transaction>("/transactions/merge-transfer", payload);
 }
 
 export function updateTransaction(id: number, input: Partial<TransactionInput>) {
