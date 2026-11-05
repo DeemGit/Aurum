@@ -87,6 +87,8 @@ export interface TransactionSplitInput {
 
 export interface CashbackCategory {
   id: number;
+  account_id: number;
+  account_name: string | null;
   name: string;
   color: string | null;
 }

@@ -103,9 +103,9 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
   const [cashbackAmountTouched, setCashbackAmountTouched] = useState(false);
 
   const cashbackCategoriesQuery = useQuery({
-    queryKey: ["cashback-categories"],
-    queryFn: fetchCashbackCategories,
-    enabled: open && (form.type === "expense" || form.type === "refund"),
+    queryKey: ["cashback-categories", form.account_id],
+    queryFn: () => fetchCashbackCategories(Number(form.account_id)),
+    enabled: open && Boolean(form.account_id) && (form.type === "expense" || form.type === "refund"),
   });
   const cashbackYear = form.date ? Number(form.date.slice(0, 4)) : new Date().getFullYear();
   const cashbackMonth = form.date ? Number(form.date.slice(5, 7)) : new Date().getMonth() + 1;
@@ -187,6 +187,17 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
     }
     setError(null);
   }, [open, transaction, accounts]);
+
+  useEffect(() => {
+    if (!open || !form.cashback_category_id || !cashbackCategoriesQuery.data) return;
+    const stillValid = cashbackCategoriesQuery.data.some(
+      (category) => String(category.id) === form.cashback_category_id
+    );
+    if (!stillValid) {
+      setCashbackAmountTouched(false);
+      setForm((prev) => ({ ...prev, cashback_category_id: "", cashback_amount: "" }));
+    }
+  }, [open, form.cashback_category_id, cashbackCategoriesQuery.data]);
 
   useEffect(() => {
     if (!open || cashbackAmountTouched) return;
@@ -545,7 +556,15 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
             id="account"
             required
             value={form.account_id}
-            onChange={(event) => setForm((prev) => ({ ...prev, account_id: event.target.value }))}
+            onChange={(event) => {
+              setCashbackAmountTouched(false);
+              setForm((prev) => ({
+                ...prev,
+                account_id: event.target.value,
+                cashback_category_id: "",
+                cashback_amount: "",
+              }));
+            }}
           >
             <option value="" disabled>
               {t("transactions.form.selectAccount")}

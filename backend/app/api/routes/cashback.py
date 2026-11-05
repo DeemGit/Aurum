@@ -17,8 +17,11 @@ router = APIRouter(tags=["cashback"])
 
 
 @router.get("/cashback-categories", response_model=list[CashbackCategoryRead])
-async def list_categories(session: AsyncSession = Depends(get_session)) -> list[CashbackCategoryRead]:
-    return await cashback_service.list_cashback_categories(session)
+async def list_categories(
+    account_id: int | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> list[CashbackCategoryRead]:
+    return await cashback_service.list_cashback_categories(session, account_id=account_id)
 
 
 @router.post("/cashback-categories", response_model=CashbackCategoryRead, status_code=201)

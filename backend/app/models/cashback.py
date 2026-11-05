@@ -1,6 +1,9 @@
 """Bank cashback gradations and per-account monthly rates — separate from
 expense/income Category rows, because a bank's "Active leisure" bucket is
 not the same taxonomy the user uses for spending reports.
+
+Categories belong to one account (T-Bank vs another card have different
+buckets); monthly percents live in account_cashback_rates.
 """
 from decimal import Decimal
 
@@ -12,12 +15,21 @@ from app.db.base import Base
 
 class CashbackCategory(Base):
     __tablename__ = "cashback_categories"
+    __table_args__ = (
+        UniqueConstraint("account_id", "name", name="uq_cashback_categories_account_name"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     color: Mapped[str | None] = mapped_column(String(7), nullable=True)
 
+    account: Mapped["Account"] = relationship()
     rates: Mapped[list["AccountCashbackRate"]] = relationship(back_populates="cashback_category")
+
+    @property
+    def account_name(self) -> str | None:
+        return self.account.name if self.account is not None else None
 
 
 class AccountCashbackRate(Base):

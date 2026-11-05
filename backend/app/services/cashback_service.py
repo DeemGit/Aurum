@@ -78,17 +78,49 @@ async def resolve_expense_cashback_amount(
     return compute_cashback_amount(amount, rate, account.cashback_rounding)
 
 
-async def list_cashback_categories(session: AsyncSession) -> list[CashbackCategory]:
-    result = await session.execute(select(CashbackCategory).order_by(CashbackCategory.name))
+async def _load_category(session: AsyncSession, category_id: int) -> CashbackCategory:
+    result = await session.execute(
+        select(CashbackCategory)
+        .options(selectinload(CashbackCategory.account))
+        .where(CashbackCategory.id == category_id)
+    )
+    category = result.scalar_one_or_none()
+    if category is None:
+        raise HTTPException(status_code=404, detail="Cashback category not found")
+    return category
+
+
+async def list_cashback_categories(
+    session: AsyncSession, account_id: int | None = None
+) -> list[CashbackCategory]:
+    stmt = (
+        select(CashbackCategory)
+        .options(selectinload(CashbackCategory.account))
+        .order_by(CashbackCategory.account_id, CashbackCategory.name)
+    )
+    if account_id is not None:
+        stmt = stmt.where(CashbackCategory.account_id == account_id)
+    result = await session.execute(stmt)
     return list(result.scalars().all())
 
 
 async def create_cashback_category(session: AsyncSession, payload: CashbackCategoryCreate) -> CashbackCategory:
+    account = await session.get(Account, payload.account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    _reject_cash_account(account)
     category = CashbackCategory(**payload.model_dump())
     session.add(category)
-    await session.commit()
-    await session.refresh(category)
-    return category
+    try:
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        if "uq_cashback_categories_account_name" in str(exc):
+            raise HTTPException(
+                status_code=409, detail="Cashback category name already exists on this account"
+            ) from exc
+        raise
+    return await _load_category(session, category.id)
 
 
 async def update_cashback_category(
@@ -99,9 +131,16 @@ async def update_cashback_category(
         raise HTTPException(status_code=404, detail="Cashback category not found")
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(category, field, value)
-    await session.commit()
-    await session.refresh(category)
-    return category
+    try:
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        if "uq_cashback_categories_account_name" in str(exc):
+            raise HTTPException(
+                status_code=409, detail="Cashback category name already exists on this account"
+            ) from exc
+        raise
+    return await _load_category(session, category_id)
 
 
 async def delete_cashback_category(session: AsyncSession, category_id: int) -> None:
@@ -110,6 +149,21 @@ async def delete_cashback_category(session: AsyncSession, category_id: int) -> N
         raise HTTPException(status_code=404, detail="Cashback category not found")
     await session.delete(category)
     await session.commit()
+
+
+async def ensure_cashback_category_for_account(
+    session: AsyncSession, *, cashback_category_id: int | None, account_id: int
+) -> None:
+    """Reject a cashback category that belongs to a different account."""
+    if cashback_category_id is None:
+        return
+    category = await session.get(CashbackCategory, cashback_category_id)
+    if category is None:
+        raise HTTPException(status_code=400, detail="cashback_category_id not found")
+    if category.account_id != account_id:
+        raise HTTPException(
+            status_code=400, detail="cashback_category_id must belong to the transaction account"
+        )
 
 
 async def list_account_rates(
@@ -121,7 +175,9 @@ async def list_account_rates(
     _reject_cash_account(account)
     result = await session.execute(
         select(AccountCashbackRate)
-        .options(selectinload(AccountCashbackRate.cashback_category))
+        .options(
+            selectinload(AccountCashbackRate.cashback_category).selectinload(CashbackCategory.account)
+        )
         .where(
             AccountCashbackRate.account_id == account_id,
             AccountCashbackRate.year == year,
@@ -142,16 +198,25 @@ async def upsert_account_rates(
 
     category_ids = {item.cashback_category_id for item in payload.rates}
     if category_ids:
-        found = set(
+        rows = list(
             (
-                await session.execute(select(CashbackCategory.id).where(CashbackCategory.id.in_(category_ids)))
-            )
-            .scalars()
-            .all()
+                await session.execute(
+                    select(CashbackCategory.id, CashbackCategory.account_id).where(
+                        CashbackCategory.id.in_(category_ids)
+                    )
+                )
+            ).all()
         )
+        found = {row[0] for row in rows}
         missing = category_ids - found
         if missing:
             raise HTTPException(status_code=400, detail=f"Unknown cashback category id(s): {sorted(missing)}")
+        wrong_account = sorted(row[0] for row in rows if row[1] != account_id)
+        if wrong_account:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cashback category id(s) belong to another account: {wrong_account}",
+            )
 
     await session.execute(
         delete(AccountCashbackRate).where(

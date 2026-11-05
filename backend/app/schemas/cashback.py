@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CashbackCategoryCreate(BaseModel):
+    account_id: int
     name: str = Field(min_length=1, max_length=100)
     color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
 
@@ -17,6 +18,8 @@ class CashbackCategoryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    account_id: int
+    account_name: str | None = None
     name: str
     color: str | None = None
 

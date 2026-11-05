@@ -128,7 +128,9 @@ async def test_merge_transfer_clears_cashback(client: AsyncClient, categories):
     groceries = categories["Groceries"]["id"]
     salary = categories["Salary"]["id"]
 
-    cb = await client.post("/cashback-categories", json={"name": "Travel", "color": "#112233"})
+    cb = await client.post(
+        "/cashback-categories", json={"account_id": a["id"], "name": "Travel", "color": "#112233"}
+    )
     assert cb.status_code == 201
     cb_id = cb.json()["id"]
 
@@ -260,12 +262,44 @@ async def test_merge_transfer_keeps_both_import_hashes(client: AsyncClient, cate
 
 async def test_cashback_rates_rejected_for_cash_account(client: AsyncClient):
     cash = (await client.post("/accounts", json={"name": "Cash", "type": "cash", "currency": "USD"})).json()
-    cat = (await client.post("/cashback-categories", json={"name": "Food"})).json()
+    card = (await client.post("/accounts", json={"name": "Card", "type": "debit_card", "currency": "USD"})).json()
+    missing_account = await client.post("/cashback-categories", json={"name": "Food"})
+    assert missing_account.status_code == 422
+    cat = (await client.post("/cashback-categories", json={"account_id": card["id"], "name": "Food"})).json()
     resp = await client.put(
         f"/accounts/{cash['id']}/cashback-rates",
         json={"year": 2026, "month": 6, "rates": [{"cashback_category_id": cat["id"], "percent": "5"}]},
     )
     assert resp.status_code == 400
+
+
+async def test_cashback_category_scoped_to_account(client: AsyncClient, categories):
+    a = (await client.post("/accounts", json={"name": "A", "type": "debit_card", "currency": "USD"})).json()
+    b = (await client.post("/accounts", json={"name": "B", "type": "debit_card", "currency": "USD"})).json()
+    cat_a = (
+        await client.post("/cashback-categories", json={"account_id": a["id"], "name": "Travel"})
+    ).json()
+    listed = await client.get("/cashback-categories", params={"account_id": a["id"]})
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+    assert listed.json()[0]["account_id"] == a["id"]
+
+    other = await client.get("/cashback-categories", params={"account_id": b["id"]})
+    assert other.json() == []
+
+    groceries = categories["Groceries"]["id"]
+    wrong = await client.post(
+        "/transactions",
+        json=_txn(
+            b["id"],
+            category_id=groceries,
+            amount="10.00",
+            date="2026-07-01",
+            description="wrong account cat",
+            cashback_category_id=cat_a["id"],
+        ),
+    )
+    assert wrong.status_code == 400
 
 
 async def test_expense_cashback_auto_and_override(client: AsyncClient, categories):
@@ -284,7 +318,9 @@ async def test_expense_cashback_auto_and_override(client: AsyncClient, categorie
     patched = await client.patch(f"/accounts/{account['id']}", json={"cashback_rounding": "percent_floor"})
     assert patched.status_code == 200
 
-    cat = (await client.post("/cashback-categories", json={"name": "Travel"})).json()
+    cat = (
+        await client.post("/cashback-categories", json={"account_id": account["id"], "name": "Travel"})
+    ).json()
     rates = await client.put(
         f"/accounts/{account['id']}/cashback-rates",
         json={"year": 2026, "month": 7, "rates": [{"cashback_category_id": cat["id"], "percent": "5"}]},

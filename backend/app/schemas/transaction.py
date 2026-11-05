@@ -343,6 +343,8 @@ class CashbackCategoryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    account_id: int
+    account_name: str | None = None
     name: str
     color: str | None = None
 

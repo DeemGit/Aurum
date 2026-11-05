@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_session
 from app.core.audit import log_destructive
+from app.models.cashback import CashbackCategory
 from app.models.category import Category
 from app.models.enums import CategoryKind, TransactionType
 from app.models.tag import Tag
@@ -30,7 +31,10 @@ from app.schemas.transaction import (
     split_rule_violation,
     transfer_rule_violation,
 )
-from app.services.cashback_service import resolve_expense_cashback_amount
+from app.services.cashback_service import (
+    ensure_cashback_category_for_account,
+    resolve_expense_cashback_amount,
+)
 from app.services.transaction_domain import (
     attach_import_hash,
     ensure_refund_target,
@@ -45,7 +49,7 @@ _EAGER = (
     selectinload(Transaction.transfer_account),
     selectinload(Transaction.category),
     selectinload(Transaction.tags),
-    selectinload(Transaction.cashback_category),
+    selectinload(Transaction.cashback_category).selectinload(CashbackCategory.account),
     selectinload(Transaction.splits).selectinload(TransactionSplit.category),
 )
 
@@ -266,6 +270,12 @@ async def create_transaction(payload: TransactionCreate, session: AsyncSession =
             account_id=payload.account_id,
             amount=payload.amount,
         )
+    if payload.type in (TransactionType.EXPENSE, TransactionType.REFUND):
+        await ensure_cashback_category_for_account(
+            session,
+            cashback_category_id=payload.cashback_category_id,
+            account_id=payload.account_id,
+        )
     fields = payload.model_dump(exclude={"tag_ids", "splits"})
     digest = fields.pop("import_hash", None)
     if payload.type == TransactionType.EXPENSE:
@@ -314,6 +324,12 @@ async def bulk_create_transactions(
                 refund_of_transaction_id=item.refund_of_transaction_id,  # type: ignore[arg-type]
                 account_id=item.account_id,
                 amount=item.amount,
+            )
+        if item.type in (TransactionType.EXPENSE, TransactionType.REFUND):
+            await ensure_cashback_category_for_account(
+                session,
+                cashback_category_id=item.cashback_category_id,
+                account_id=item.account_id,
             )
 
     hashes_by_account: dict[int, set[str]] = {}
@@ -406,6 +422,12 @@ async def update_transaction(
         updates["occurred_at"] = occurred_at
 
     await _ensure_category_matches_type(session, effective_category_id, effective_type)
+    if effective_type in (TransactionType.EXPENSE, TransactionType.REFUND):
+        await ensure_cashback_category_for_account(
+            session,
+            cashback_category_id=effective_cashback_category_id,
+            account_id=effective_account_id,
+        )
     violation = transfer_rule_violation(
         type=effective_type,
         account_id=effective_account_id,

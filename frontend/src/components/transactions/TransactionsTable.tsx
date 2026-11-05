@@ -110,18 +110,29 @@ export function TransactionsTable({
                 </span>
               </span>
 
-              <span
-                className={`shrink-0 text-sm font-medium tabular-nums ${
-                  transferAmount
-                    ? transferAmount.className
-                    : isExpense
-                      ? "text-text-primary"
-                      : "text-success"
-                }`}
-              >
-                {transferAmount
-                  ? `${transferAmount.sign}${transferAmount.text}`
-                  : `${isExpense ? "-" : "+"}${formatCurrency(tx.amount, tx.account.currency)}`}
+              <span className="flex shrink-0 items-center gap-1.5">
+                <span
+                  className={`text-sm font-medium tabular-nums ${
+                    transferAmount
+                      ? transferAmount.className
+                      : isExpense
+                        ? "text-text-primary"
+                        : "text-success"
+                  }`}
+                >
+                  {transferAmount
+                    ? `${transferAmount.sign}${transferAmount.text}`
+                    : `${isExpense ? "-" : "+"}${formatCurrency(tx.amount, tx.account.currency)}`}
+                </span>
+                {tx.cashback_amount != null && Number(tx.cashback_amount) !== 0 && (
+                  <span
+                    className="inline-flex items-center rounded-full bg-success/15 px-2 py-0.5 text-xs font-medium tabular-nums text-success"
+                    title={t("transactions.cashback")}
+                  >
+                    {Number(tx.cashback_amount) > 0 ? "+" : ""}
+                    {formatCurrency(tx.cashback_amount, tx.account.currency)}
+                  </span>
+                )}
               </span>
 
               <span className="flex shrink-0 gap-1">

@@ -27,12 +27,24 @@ export interface CashbackReport {
   }[];
 }
 
-export function fetchCashbackCategories() {
-  return api.get<CashbackCategory[]>("/cashback-categories");
+export function fetchCashbackCategories(accountId?: number) {
+  const params = accountId ? `?account_id=${accountId}` : "";
+  return api.get<CashbackCategory[]>(`/cashback-categories${params}`);
 }
 
-export function createCashbackCategory(input: { name: string; color?: string | null }) {
+export function createCashbackCategory(input: {
+  account_id: number;
+  name: string;
+  color?: string | null;
+}) {
   return api.post<CashbackCategory>("/cashback-categories", input);
+}
+
+export function updateCashbackCategory(
+  id: number,
+  input: { name?: string; color?: string | null }
+) {
+  return api.patch<CashbackCategory>(`/cashback-categories/${id}`, input);
 }
 
 export function deleteCashbackCategory(id: number) {
