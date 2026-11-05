@@ -83,6 +83,36 @@ async def test_refund_reduces_purchase_month_spend(client: AsyncClient, account_
     assert money(accounts[account_id]["balance"]) == Decimal("-70.00")
 
 
+async def test_refund_may_use_different_account(client: AsyncClient, account_id, categories):
+    groceries = categories["Groceries"]["id"]
+    other = (
+        await client.post("/accounts", json={"name": "Other card", "type": "debit_card", "currency": "USD"})
+    ).json()
+
+    expense = await client.post(
+        "/transactions",
+        json=_txn(account_id, category_id=groceries, amount="40.00", date="2026-06-01", description="buy"),
+    )
+    assert expense.status_code == 201
+
+    refund = await client.post(
+        "/transactions",
+        json={
+            "account_id": other["id"],
+            "type": "refund",
+            "amount": "40.00",
+            "description": "return to other card",
+            "date": "2026-06-10",
+            "refund_of_transaction_id": expense.json()["id"],
+        },
+    )
+    assert refund.status_code == 201
+
+    accounts = {a["id"]: a for a in (await client.get("/accounts")).json()}
+    assert money(accounts[account_id]["balance"]) == Decimal("-40.00")
+    assert money(accounts[other["id"]]["balance"]) == Decimal("40.00")
+
+
 async def test_bulk_skips_duplicate_import_hash(client: AsyncClient, account_id, categories):
     groceries = categories["Groceries"]["id"]
     digest = "a" * 64

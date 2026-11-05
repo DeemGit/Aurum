@@ -35,7 +35,6 @@ async def ensure_refund_target(
     session: AsyncSession,
     *,
     refund_of_transaction_id: int,
-    account_id: int,
     amount: Decimal,
     exclude_refund_id: int | None = None,
 ) -> Transaction:
@@ -48,8 +47,8 @@ async def ensure_refund_target(
         raise HTTPException(status_code=400, detail="refund_of_transaction_id not found")
     if original.type != TransactionType.EXPENSE:
         raise HTTPException(status_code=400, detail="refund_of_transaction_id must reference an expense")
-    if original.account_id != account_id:
-        raise HTTPException(status_code=400, detail="refund must use the same account as the original expense")
+    # Refund may land on a different account than the original expense
+    # (e.g. returned to another card / cash).
 
     refunded_stmt = select(func.coalesce(func.sum(Transaction.amount), 0)).where(
         Transaction.type == TransactionType.REFUND,

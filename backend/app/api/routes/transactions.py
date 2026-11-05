@@ -267,7 +267,6 @@ async def create_transaction(payload: TransactionCreate, session: AsyncSession =
         await ensure_refund_target(
             session,
             refund_of_transaction_id=payload.refund_of_transaction_id,  # type: ignore[arg-type]
-            account_id=payload.account_id,
             amount=payload.amount,
         )
     if payload.type in (TransactionType.EXPENSE, TransactionType.REFUND):
@@ -322,7 +321,6 @@ async def bulk_create_transactions(
             await ensure_refund_target(
                 session,
                 refund_of_transaction_id=item.refund_of_transaction_id,  # type: ignore[arg-type]
-                account_id=item.account_id,
                 amount=item.amount,
             )
         if item.type in (TransactionType.EXPENSE, TransactionType.REFUND):
@@ -493,7 +491,6 @@ async def update_transaction(
         await ensure_refund_target(
             session,
             refund_of_transaction_id=effective_refund_of,  # type: ignore[arg-type]
-            account_id=effective_account_id,
             amount=effective_amount,
             exclude_refund_id=transaction_id,
         )
