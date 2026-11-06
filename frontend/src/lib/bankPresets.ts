@@ -43,6 +43,13 @@ export interface BankPreset {
   /** Rows whose `column` value fails `accept` are skipped before parsing —
    * e.g. a "Статус" column that reads FAILED for a declined payment. */
   rowFilter?: { column: HeaderMatcher; accept: (value: string) => boolean };
+  /** When the export stores absolute amounts and puts debit/credit in another
+   * column (Alfa-Bank `type`: Списание / Пополнение), multiply |amount| by
+   * this sign so the wizard's sign→type rule still works. `null` skips the row. */
+  amountSign?: {
+    column: HeaderMatcher;
+    sign: (value: string) => 1 | -1 | null;
+  };
 }
 
 /** Lower-cased, trimmed, BOM-stripped, whitespace-collapsed header text.
@@ -122,6 +129,40 @@ export const BANK_PRESETS: readonly BankPreset[] = [
     dateFormat: "DD.MM.YYYY",
     amountFormat: "auto",
   },
+  {
+    // alfabank.ru → Выписка → CSV. Comma-separated, Latin header names,
+    // absolute amounts; direction lives in `type` (Списание / Пополнение).
+    // Status is «Выполнен» or empty on some credits — both count as posted.
+    id: "alfabank",
+    label: "Альфа-Банк",
+    detect: [["operationdate"], ["transactiondate"], ["type"], ["amount"]],
+    mapping: {
+      date: ["operationdate"],
+      amount: ["amount"],
+      description: ["merchant"],
+      merchant: ["merchant"],
+      category: ["category"],
+      notes: ["comment"],
+    },
+    dateFormat: "DD.MM.YYYY",
+    amountFormat: "dot-decimal",
+    rowFilter: {
+      column: ["status"],
+      accept: (value) => {
+        const status = value.trim().toLowerCase();
+        return status === "" || status === "выполнен";
+      },
+    },
+    amountSign: {
+      column: ["type"],
+      sign: (value) => {
+        const direction = value.trim().toLowerCase();
+        if (direction === "списание") return -1;
+        if (direction === "пополнение") return 1;
+        return null;
+      },
+    },
+  },
 ];
 
 export function findPreset(id: string): BankPreset | null {
@@ -157,4 +198,36 @@ export function rowFilterRejection(preset: BankPreset | null, headers: string[],
   if (idx < 0) return null;
   const value = cells[idx] ?? "";
   return preset.rowFilter.accept(value) ? null : value.trim();
+}
+
+/** Applies preset `amountSign` so absolute bank amounts get a debit/credit
+ * polarity. Returns null when the sign column says to skip the row, or when
+ * the column is mapped but the value is unrecognised. Without `amountSign`
+ * (or when its column is missing), returns `amount` unchanged. */
+export function applyAmountSign(
+  preset: BankPreset | null,
+  headers: string[],
+  cells: string[],
+  amount: number
+): number | null {
+  if (!preset?.amountSign) return amount;
+  const header = findHeader(headers, preset.amountSign.column);
+  const idx = headers.indexOf(header);
+  if (idx < 0) return amount;
+  const sign = preset.amountSign.sign(cells[idx] ?? "");
+  if (sign === null) return null;
+  return Math.abs(amount) * sign;
+}
+
+/** Cell text from the preset's amountSign column (for skip messages). */
+export function amountSignColumnValue(
+  preset: BankPreset | null,
+  headers: string[],
+  cells: string[]
+): string {
+  if (!preset?.amountSign) return "";
+  const header = findHeader(headers, preset.amountSign.column);
+  const idx = headers.indexOf(header);
+  if (idx < 0) return "";
+  return (cells[idx] ?? "").trim();
 }

@@ -11,6 +11,8 @@ import { convertGpbHtmlStatement } from "@/api/transactions";
 import { translateCategoryName } from "@/lib/categoryLabels";
 import {
   BANK_PRESETS,
+  applyAmountSign,
+  amountSignColumnValue,
   applyPresetMapping,
   detectPreset,
   findPreset,
@@ -285,13 +287,26 @@ export function CsvImportPage() {
         skippedRows.push({ row: rowNumber, reason: t("transactions.import.errorBadAmount", { value: rawAmount || "—" }) });
         return;
       }
+      // Alfa-Bank (and similar) store absolute amounts; debit/credit is a
+      // separate column — applyAmountSign folds that into the sign the
+      // rest of the wizard already understands.
+      const signed = applyAmountSign(activePreset, headers, cells, amount);
+      if (signed === null) {
+        skippedRows.push({
+          row: rowNumber,
+          reason: t("transactions.import.errorBadDirection", {
+            value: amountSignColumnValue(activePreset, headers, cells) || "—",
+          }),
+        });
+        return;
+      }
       const description = rawDescription || rawMerchant;
       if (!description) {
         skippedRows.push({ row: rowNumber, reason: t("transactions.import.errorNoDescription") });
         return;
       }
 
-      const type = resolveType(amount);
+      const type = resolveType(signed);
       const categoryId = rawCategory ? categoryLookup[type].get(rawCategory.toLowerCase()) ?? null : null;
 
       rows.push({
@@ -299,7 +314,7 @@ export function CsvImportPage() {
         category_id: categoryId,
         transfer_account_id: null,
         type,
-        amount: Math.abs(amount).toFixed(2),
+        amount: Math.abs(signed).toFixed(2),
         description,
         merchant: rawMerchant || null,
         notes: rawNotes || null,

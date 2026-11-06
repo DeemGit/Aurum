@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { applyPresetMapping, detectPreset, findPreset, normalizeHeader, rowFilterRejection, type ImportMapping } from "@/lib/bankPresets";
+import {
+  applyAmountSign,
+  applyPresetMapping,
+  detectPreset,
+  findPreset,
+  normalizeHeader,
+  rowFilterRejection,
+  type ImportMapping,
+} from "@/lib/bankPresets";
 import {
   localOffsetSuffix,
   parseAmount,
@@ -31,6 +39,14 @@ const PRIVAT_CSV = [
   "05.02.2024;14:05;Продукти;5168****1234;АТБ;-320,00;UAH;-320,00;UAH;1500,00;UAH",
 ].join("\n");
 
+// Alfa-Bank web statement CSV — absolute amounts, direction in `type`.
+// Account/card numbers redacted; shape matches real exports.
+const ALFA_CSV = [
+  "operationDate,transactionDate,accountName,accountNumber,cardName,cardNumber,merchant,amount,currency,status,category,mcc,type,comment,bonusValue,bonusTitle",
+  '04.11.2026,05.11.2026,"Текущий счёт",************4026,"Карта Alfa Only",220015******1112,"MOSKVA\\SHOP",5950,RUR,Выполнен,"Активный отдых",7996,Списание,,+767,Рубли',
+  '04.11.2026,04.11.2026,"Текущий счёт",************4026,,,"Перевод по СБП",6000,RUR,,Переводы,,Пополнение,,,',
+].join("\n");
+
 describe("normalizeHeader", () => {
   it("folds case, whitespace, BOM and the Latin i", () => {
     expect(normalizeHeader("﻿  Дата  i   час ")).toBe("дата і час");
@@ -38,10 +54,11 @@ describe("normalizeHeader", () => {
 });
 
 describe("detectPreset", () => {
-  it("recognises T-Bank, monobank and PrivatBank header rows", () => {
+  it("recognises T-Bank, monobank, PrivatBank and Alfa-Bank header rows", () => {
     expect(detectPreset(parseCsv(TBANK_CSV)[0])?.id).toBe("tbank");
     expect(detectPreset(parseCsv(MONOBANK_CSV)[0])?.id).toBe("monobank");
     expect(detectPreset(parseCsv(PRIVAT_CSV)[0])?.id).toBe("privatbank");
+    expect(detectPreset(parseCsv(ALFA_CSV)[0])?.id).toBe("alfabank");
   });
 
   it("returns null for a generic export", () => {
@@ -75,6 +92,19 @@ describe("applyPresetMapping", () => {
     expect(mapping.notes).toBe("Картка");
     expect(mapping.category).toBe("Категорія");
   });
+
+  it("maps Alfa-Bank Latin headers onto operation date, merchant and comment", () => {
+    const headers = parseCsv(ALFA_CSV)[0];
+    const mapping = applyPresetMapping(findPreset("alfabank")!, headers, EMPTY);
+    expect(mapping).toMatchObject({
+      date: "operationDate",
+      amount: "amount",
+      description: "merchant",
+      merchant: "merchant",
+      category: "category",
+      notes: "comment",
+    });
+  });
 });
 
 describe("rowFilterRejection", () => {
@@ -95,6 +125,36 @@ describe("rowFilterRejection", () => {
     expect(rowFilterRejection(findPreset("monobank")!, headers, row)).toBeNull();
     expect(rowFilterRejection(findPreset("tbank")!, ["Дата"], ["01.01.2024"])).toBeNull();
     expect(rowFilterRejection(null, headers, row)).toBeNull();
+  });
+
+  it("keeps Alfa-Bank Выполнен and empty status", () => {
+    const [headers, debit, credit] = parseCsv(ALFA_CSV);
+    const preset = findPreset("alfabank")!;
+    expect(rowFilterRejection(preset, headers, debit)).toBeNull();
+    expect(rowFilterRejection(preset, headers, credit)).toBeNull();
+  });
+});
+
+describe("applyAmountSign", () => {
+  it("negates Alfa-Bank Списание and keeps Пополнение positive", () => {
+    const [headers, debit, credit] = parseCsv(ALFA_CSV);
+    const preset = findPreset("alfabank")!;
+    expect(applyAmountSign(preset, headers, debit, 5950)).toBe(-5950);
+    expect(applyAmountSign(preset, headers, credit, 6000)).toBe(6000);
+  });
+
+  it("returns null for an unknown Alfa-Bank type", () => {
+    const [headers, debit] = parseCsv(ALFA_CSV);
+    const preset = findPreset("alfabank")!;
+    const bad = [...debit];
+    bad[headers.indexOf("type")] = "Hold";
+    expect(applyAmountSign(preset, headers, bad, 100)).toBeNull();
+  });
+
+  it("leaves the amount alone when the preset has no amountSign", () => {
+    const [headers, row] = parseCsv(TBANK_CSV);
+    expect(applyAmountSign(findPreset("tbank")!, headers, row, -882.04)).toBe(-882.04);
+    expect(applyAmountSign(null, headers, row, 50)).toBe(50);
   });
 });
 
@@ -121,6 +181,13 @@ describe("preset formats against real sample rows", () => {
     const preset = findPreset("privatbank")!;
     expect(parseDateWithFormat(row[0], preset.dateFormat)).toBe("2024-02-05");
     expect(parseAmount(row[5], preset.amountFormat)).toBe(-320);
+  });
+
+  it("parses Alfa-Bank's plain date and absolute dot-decimal amount", () => {
+    const [, row] = parseCsv(ALFA_CSV);
+    const preset = findPreset("alfabank")!;
+    expect(parseDateWithFormat(row[0], preset.dateFormat)).toBe("2026-11-04");
+    expect(parseAmount(row[7], preset.amountFormat)).toBe(5950);
   });
 });
 
