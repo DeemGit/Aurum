@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, Upload } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -138,6 +138,8 @@ export function CsvImportPage() {
   const [gpbToday, setGpbToday] = useState(todayLocalIso);
   const [gpbConverting, setGpbConverting] = useState(false);
   const [convertedCsv, setConvertedCsv] = useState<string | null>(null);
+  const [selectedIndexes, setSelectedIndexes] = useState<Set<number>>(() => new Set());
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
   // Re-decoded whenever `encoding` changes, so picking a different encoding
   // on the map screen (because the auto-detected guess came out wrong)
@@ -368,6 +370,35 @@ export function CsvImportPage() {
     };
   }, [step, candidates, candidateHashes, existingKeys, includeDuplicates]);
 
+  // Re-select every preview row when the candidate list changes (enter preview,
+  // toggle duplicates, re-hash). Default = all selected.
+  const validSelectionKey = useMemo(
+    () =>
+      valid
+        .map((row) => `${row.date}|${row.amount}|${row.description}|${row.import_hash ?? ""}`)
+        .join("\n"),
+    [valid],
+  );
+
+  useEffect(() => {
+    setSelectedIndexes(new Set(valid.map((_, index) => index)));
+  }, [validSelectionKey, valid]);
+
+  const selectedCount = useMemo(() => {
+    let count = 0;
+    for (const index of selectedIndexes) {
+      if (index >= 0 && index < valid.length) count += 1;
+    }
+    return count;
+  }, [selectedIndexes, valid.length]);
+
+  const allSelected = valid.length > 0 && selectedCount === valid.length;
+  const someSelected = selectedCount > 0 && selectedCount < valid.length;
+
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = someSelected;
+  }, [someSelected]);
+
   async function handleFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -466,12 +497,28 @@ export function CsvImportPage() {
     setParseError(null);
   }
 
+  function toggleSelectAll(event: ChangeEvent<HTMLInputElement>) {
+    if (event.target.checked) setSelectedIndexes(new Set(valid.map((_, index) => index)));
+    else setSelectedIndexes(new Set());
+  }
+
+  function toggleRowSelected(index: number, checked: boolean) {
+    setSelectedIndexes((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(index);
+      else next.delete(index);
+      return next;
+    });
+  }
+
   async function handleImport() {
     setImportError(null);
     try {
       const presetId = activePreset?.id;
       const withHashes: TransactionInput[] = [];
-      for (const item of valid) {
+      for (let index = 0; index < valid.length; index++) {
+        if (!selectedIndexes.has(index)) continue;
+        const item = valid[index]!;
         const occurredAt = item.occurred_at ?? toOccurredAtIso(item.date!, "00:00");
         const import_hash =
           item.import_hash ??
@@ -851,10 +898,20 @@ export function CsvImportPage() {
                 )}
 
                 {valid.length > 0 && (
-                  <div className="overflow-x-auto rounded-lg border border-border">
+                  <div className="max-h-[min(24rem,55vh)] overflow-auto rounded-lg border border-border">
                     <table className="w-full text-left text-sm">
-                      <thead className="bg-surface-2 text-xs text-text-muted">
+                      <thead className="sticky top-0 bg-surface-2 text-xs text-text-muted">
                         <tr>
+                          <th className="w-10 px-3 py-2">
+                            <input
+                              ref={selectAllRef}
+                              type="checkbox"
+                              checked={allSelected}
+                              onChange={toggleSelectAll}
+                              aria-label={t("transactions.import.selectAll")}
+                              className="h-3.5 w-3.5 accent-text-primary"
+                            />
+                          </th>
                           <th className="px-3 py-2 font-medium">{t("transactions.form.dateLabel")}</th>
                           <th className="px-3 py-2 font-medium">{t("transactions.form.descriptionLabel")}</th>
                           <th className="px-3 py-2 font-medium">{t("transactions.form.categoryLabel")}</th>
@@ -862,8 +919,17 @@ export function CsvImportPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gridline">
-                        {valid.slice(0, 20).map((item, index) => (
-                          <tr key={index}>
+                        {valid.map((item, index) => (
+                          <tr key={index} className={selectedIndexes.has(index) ? undefined : "opacity-50"}>
+                            <td className="px-3 py-1.5">
+                              <input
+                                type="checkbox"
+                                checked={selectedIndexes.has(index)}
+                                onChange={(event) => toggleRowSelected(index, event.target.checked)}
+                                aria-label={t("transactions.import.selectRow", { row: index + 1 })}
+                                className="h-3.5 w-3.5 accent-text-primary"
+                              />
+                            </td>
                             <td className="whitespace-nowrap px-3 py-1.5 text-text-secondary">{item.date}</td>
                             <td className="px-3 py-1.5 text-text-primary">{item.description}</td>
                             <td className="whitespace-nowrap px-3 py-1.5 text-text-secondary">
@@ -883,11 +949,6 @@ export function CsvImportPage() {
                         ))}
                       </tbody>
                     </table>
-                    {valid.length > 20 && (
-                      <p className="border-t border-border px-3 py-2 text-xs text-text-muted">
-                        {t("transactions.import.andMore", { count: valid.length - 20 })}
-                      </p>
-                    )}
                   </div>
                 )}
 
@@ -909,12 +970,12 @@ export function CsvImportPage() {
                       duplicate check still serves stale data, and importing
                       against that would wave duplicates straight through. */}
                   <Button
-                    disabled={valid.length === 0 || bulkCreate.isPending || existingTransactions.isFetching}
+                    disabled={selectedCount === 0 || bulkCreate.isPending || existingTransactions.isFetching}
                     onClick={() => void handleImport()}
                   >
                     {bulkCreate.isPending
                       ? t("common.saving")
-                      : t("transactions.import.importButton", { count: valid.length })}
+                      : t("transactions.import.importButton", { count: selectedCount })}
                   </Button>
                 </div>
               </>
