@@ -31,6 +31,25 @@ def attach_import_hash(transaction: Transaction, account_id: int, digest: str | 
     )
 
 
+def backfill_import_hash(transaction: Transaction, account_id: int, digest: str) -> bool:
+    """Attach a fingerprint to an older row that lacked one.
+
+    Never overwrites a different legacy ``import_hash`` already stored on the
+    row; only fills the column when empty, and always appends a
+    ``transaction_import_hashes`` row when this digest is new for the account.
+    Returns True when a new hash row was added.
+    """
+    existing = {row.import_hash for row in transaction.import_hashes}
+    if digest in existing:
+        return False
+    if transaction.import_hash is None:
+        transaction.import_hash = digest
+    transaction.import_hashes.append(
+        TransactionImportHash(account_id=account_id, import_hash=digest)
+    )
+    return True
+
+
 async def ensure_refund_target(
     session: AsyncSession,
     *,

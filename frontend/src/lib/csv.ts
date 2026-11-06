@@ -129,6 +129,15 @@ export function parseDateWithFormat(raw: string, format: DateFormat): string | n
   return parseDateTimeWithFormat(raw, format)?.date ?? null;
 }
 
+/** Wall-clock portion of an ISO timestamptz for hash stability across TZ tags. */
+export function wallClockForImportHash(occurredAt: string): string {
+  const trimmed = occurredAt.trim();
+  // "2026-11-06T16:14:01+03:00" / "...Z" → "2026-11-06T16:14:01"
+  const match = trimmed.match(/^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})/);
+  if (match) return match[1]!.replace(" ", "T");
+  return trimmed;
+}
+
 /** SHA-256 hex digest of a stable import-row canon for re-import dedupe. */
 export async function computeImportHash(parts: {
   accountId: number;
@@ -142,7 +151,7 @@ export async function computeImportHash(parts: {
   const canon = [
     String(parts.accountId),
     parts.date,
-    parts.occurredAt,
+    wallClockForImportHash(parts.occurredAt),
     parts.amount,
     parts.description.trim().toLowerCase(),
     (parts.merchant ?? "").trim().toLowerCase(),
@@ -198,10 +207,9 @@ export function parseAmount(raw: string, format: AmountFormat = "auto"): number 
 
 /** Stable key for spotting a re-imported bank export that overlaps a
  * previous one — see pages/CsvImportPage.tsx's duplicate check. Matches on
- * date + type + amount (2dp) + description, the same fields the API
- * actually stores, so it works whether the "existing" side comes from a
- * Transaction or the "candidate" side from a freshly parsed CSV row. */
-export function transactionDedupeKey(date: string, type: string, amount: number | string, description: string): string {
+ * date + amount (2dp) + description only (not type): an expense later merged
+ * into a transfer must still block the same statement row. */
+export function transactionDedupeKey(date: string, amount: number | string, description: string): string {
   const normalizedAmount = typeof amount === "number" ? amount : Number(amount);
-  return `${date}|${type}|${normalizedAmount.toFixed(2)}|${description.trim().toLowerCase()}`;
+  return `${date}|${normalizedAmount.toFixed(2)}|${description.trim().toLowerCase()}`;
 }

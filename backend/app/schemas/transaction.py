@@ -392,6 +392,8 @@ class TransactionBulkCreate(BaseModel):
 class TransactionBulkCreateResult(BaseModel):
     created: int
     skipped_duplicates: int = 0
+    # Rows matched to an existing tx that had no fingerprint yet — hash attached, no insert.
+    hashes_backfilled: int = 0
 
 
 class TransferMatchCandidate(BaseModel):

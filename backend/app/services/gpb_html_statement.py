@@ -352,6 +352,8 @@ def operations_to_csv(operations: list[GpbOperation]) -> str:
     writer = csv.writer(buf, delimiter=";", quoting=csv.QUOTE_ALL, lineterminator="\n")
     writer.writerow(CSV_HEADERS)
     for op in operations:
+        # Bank UI subtitle (e.g. «Перевод•Альфа-Банк») → Сообщение so the
+        # tbank preset maps it to notes; leave category columns empty.
         writer.writerow(
             [
                 op.occurred_at,
@@ -360,10 +362,10 @@ def operations_to_csv(operations: list[GpbOperation]) -> str:
                 op.amount,
                 "RUB",
                 "Ок",
-                op.category,
-                op.category,
-                op.description,
                 "",
+                "",
+                op.description,
+                op.category,
                 op.bonuses,
             ]
         )

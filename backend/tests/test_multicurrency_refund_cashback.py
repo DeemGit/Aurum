@@ -113,6 +113,62 @@ async def test_refund_may_use_different_account(client: AsyncClient, account_id,
     assert money(accounts[other["id"]]["balance"]) == Decimal("40.00")
 
 
+async def test_bulk_backfills_import_hash_on_existing_row(client: AsyncClient, account_id, categories):
+    groceries = categories["Groceries"]["id"]
+    created = await client.post(
+        "/transactions",
+        json=_txn(account_id, category_id=groceries, amount="42.00", date="2026-07-01", description="legacy row"),
+    )
+    assert created.status_code == 201
+    tx_id = created.json()["id"]
+    assert created.json()["import_hash"] is None
+
+    digest = "b" * 64
+    bulk = await client.post(
+        "/transactions/bulk",
+        json={
+            "items": [
+                {
+                    "account_id": account_id,
+                    "type": "expense",
+                    "amount": "42.00",
+                    "description": "Legacy Row",
+                    "date": "2026-07-01",
+                    "import_hash": digest,
+                }
+            ]
+        },
+    )
+    assert bulk.status_code == 201
+    body = bulk.json()
+    assert body["created"] == 0
+    assert body["hashes_backfilled"] == 1
+
+    listed = await client.get("/transactions", params={"account_id": account_id, "page_size": 50})
+    row = next(item for item in listed.json()["items"] if item["id"] == tx_id)
+    assert row["import_hash"] == digest
+
+    again = await client.post(
+        "/transactions/bulk",
+        json={
+            "items": [
+                {
+                    "account_id": account_id,
+                    "type": "expense",
+                    "amount": "42.00",
+                    "description": "legacy row",
+                    "date": "2026-07-01",
+                    "import_hash": digest,
+                }
+            ]
+        },
+    )
+    assert again.status_code == 201
+    assert again.json()["created"] == 0
+    assert again.json()["skipped_duplicates"] == 1
+    assert again.json()["hashes_backfilled"] == 0
+
+
 async def test_bulk_skips_duplicate_import_hash(client: AsyncClient, account_id, categories):
     groceries = categories["Groceries"]["id"]
     digest = "a" * 64

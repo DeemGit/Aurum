@@ -59,7 +59,10 @@ export function createTransaction(input: TransactionInput) {
 /** CSV import — see pages/CsvImportPage.tsx. Validation still fails the whole
  * request on a bad row; rows whose import_hash already exists are skipped. */
 export function bulkCreateTransactions(items: TransactionInput[]) {
-  return api.post<{ created: number; skipped_duplicates: number }>("/transactions/bulk", { items });
+  return api.post<{ created: number; skipped_duplicates: number; hashes_backfilled: number }>(
+    "/transactions/bulk",
+    { items },
+  );
 }
 
 /** Gazprombank HTML history paste → CSV for the import wizard. */

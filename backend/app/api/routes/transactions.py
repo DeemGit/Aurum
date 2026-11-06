@@ -40,6 +40,7 @@ from app.services.cashback_service import (
 )
 from app.services.transaction_domain import (
     attach_import_hash,
+    backfill_import_hash,
     ensure_refund_target,
     find_transfer_match_candidates,
     merge_into_transfer,
@@ -328,7 +329,9 @@ async def bulk_create_transactions(
 ) -> TransactionBulkCreateResult:
     """CSV import lands here — see schemas.TransactionBulkCreate. Bad rows
     still 400 the whole request; rows whose import_hash already exists on
-    the account are skipped instead of aborting."""
+    the account are skipped instead of aborting. Rows that match an older
+    transaction by date/amount/description (any type) without that hash yet
+    get the fingerprint backfilled instead of a duplicate insert."""
     for item in payload.items:
         await _ensure_category_matches_type(session, item.category_id, item.type)
         if item.type == TransactionType.REFUND:
@@ -362,6 +365,7 @@ async def bulk_create_transactions(
 
     transactions = []
     skipped = 0
+    hashes_backfilled = 0
     seen_in_batch: set[tuple[int, str]] = set()
     for item in payload.items:
         if item.import_hash:
@@ -370,6 +374,32 @@ async def bulk_create_transactions(
                 skipped += 1
                 continue
             seen_in_batch.add(key)
+
+            # Older rows (incl. expense→transfer) may lack this fingerprint —
+            # attach it instead of inserting a second expense.
+            match = (
+                await session.execute(
+                    select(Transaction)
+                    .options(selectinload(Transaction.import_hashes))
+                    .where(
+                        Transaction.account_id == item.account_id,
+                        Transaction.date == item.date,
+                        Transaction.amount == item.amount,
+                        func.lower(func.trim(Transaction.description)) == item.description.strip().lower(),
+                    )
+                    .order_by(Transaction.id.asc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if match is not None and backfill_import_hash(match, item.account_id, item.import_hash):
+                hashes_backfilled += 1
+                existing_hashes.add(key)
+                continue
+            if match is not None:
+                # Same identity already has this digest via another path — treat as skip.
+                skipped += 1
+                continue
+
         fields = item.model_dump(exclude={"tag_ids", "splits"})
         digest = fields.pop("import_hash", None)
         if item.type == TransactionType.EXPENSE:
@@ -389,11 +419,21 @@ async def bulk_create_transactions(
             transaction.splits = await _build_splits(session, item.splits, item.type)
         transactions.append(transaction)
 
-    if transactions:
-        session.add_all(transactions)
+    if transactions or hashes_backfilled:
+        if transactions:
+            session.add_all(transactions)
         await session.commit()
-        log_destructive("transactions.bulk_created", count=len(transactions), skipped_duplicates=skipped)
-    return TransactionBulkCreateResult(created=len(transactions), skipped_duplicates=skipped)
+        log_destructive(
+            "transactions.bulk_created",
+            count=len(transactions),
+            skipped_duplicates=skipped,
+            hashes_backfilled=hashes_backfilled,
+        )
+    return TransactionBulkCreateResult(
+        created=len(transactions),
+        skipped_duplicates=skipped,
+        hashes_backfilled=hashes_backfilled,
+    )
 
 
 @router.patch("/{transaction_id}", response_model=TransactionRead)

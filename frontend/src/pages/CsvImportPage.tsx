@@ -232,19 +232,19 @@ export function CsvImportPage() {
     dateBounds?.max ?? null
   );
 
-  // Prefer import_hash when present (re-import after the hash column shipped);
-  // fall back to the legacy date|type|amount|description key for older rows.
+  // Prefer import_hash when present; fall back to date|amount|description
+  // (type omitted so expense→transfer still matches the statement row).
   const existingKeys = useMemo(() => {
     const keys = new Set<string>();
     for (const tx of existingTransactions.data ?? []) {
       if (tx.import_hash) keys.add(`hash:${tx.import_hash}`);
-      keys.add(transactionDedupeKey(tx.date, tx.type, tx.amount, tx.description));
+      keys.add(transactionDedupeKey(tx.date, tx.amount, tx.description));
     }
     return keys;
   }, [existingTransactions.data]);
 
-  const { valid, skipped, duplicateCount } = useMemo(() => {
-    if (step !== "preview") return { valid: [] as TransactionInput[], skipped: [] as SkippedRow[], duplicateCount: 0 };
+  const { candidates, skipped } = useMemo(() => {
+    if (step !== "preview") return { candidates: [] as TransactionInput[], skipped: [] as SkippedRow[] };
 
     const dateIdx = headers.indexOf(mapping.date);
     const amountIdx = headers.indexOf(mapping.amount);
@@ -253,8 +253,7 @@ export function CsvImportPage() {
     const notesIdx = mapping.notes ? headers.indexOf(mapping.notes) : -1;
     const categoryIdx = mapping.category ? headers.indexOf(mapping.category) : -1;
 
-    const freshRows: TransactionInput[] = [];
-    const duplicateRows: TransactionInput[] = [];
+    const rows: TransactionInput[] = [];
     const skippedRows: SkippedRow[] = [];
 
     dataRows.forEach((cells, index) => {
@@ -294,7 +293,7 @@ export function CsvImportPage() {
       const type = resolveType(amount);
       const categoryId = rawCategory ? categoryLookup[type].get(rawCategory.toLowerCase()) ?? null : null;
 
-      const candidate: TransactionInput = {
+      rows.push({
         account_id: Number(accountId),
         category_id: categoryId,
         transfer_account_id: null,
@@ -305,23 +304,69 @@ export function CsvImportPage() {
         notes: rawNotes || null,
         date: parsedDate.date,
         occurred_at: parsedDate.occurred_at,
-      };
+      });
+    });
 
-      const key = transactionDedupeKey(parsedDate.date, candidate.type, candidate.amount, candidate.description);
-      if (existingKeys.has(key)) {
-        duplicateRows.push(candidate);
-      } else {
-        freshRows.push(candidate);
-      }
+    return { candidates: rows, skipped: skippedRows };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, headers, dataRows, mapping, dateFormat, amountFormat, categoryLookup, accountId, activePreset, t]);
+
+  // import_hash digests for preview dedupe (async SubtleCrypto).
+  const [candidateHashes, setCandidateHashes] = useState<(string | null)[]>([]);
+
+  useEffect(() => {
+    if (step !== "preview" || candidates.length === 0) {
+      setCandidateHashes([]);
+      return;
+    }
+    let cancelled = false;
+    const presetId = activePreset?.id;
+    (async () => {
+      const digests = await Promise.all(
+        candidates.map(async (item) => {
+          const occurredAt = item.occurred_at ?? toOccurredAtIso(item.date!, "00:00");
+          return computeImportHash({
+            accountId: item.account_id,
+            date: item.date ?? occurredAt.slice(0, 10),
+            occurredAt,
+            amount: item.amount,
+            description: item.description,
+            merchant: item.merchant ?? undefined,
+            presetId,
+          });
+        }),
+      );
+      if (!cancelled) setCandidateHashes(digests);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, candidates, activePreset?.id]);
+
+  const { valid, duplicateCount } = useMemo(() => {
+    if (step !== "preview") return { valid: [] as TransactionInput[], duplicateCount: 0 };
+
+    const freshRows: TransactionInput[] = [];
+    const duplicateRows: TransactionInput[] = [];
+
+    candidates.forEach((candidate, index) => {
+      const digest = candidateHashes[index] ?? null;
+      const key = transactionDedupeKey(candidate.date!, candidate.amount, candidate.description);
+      const hashKnown = digest !== null && existingKeys.has(`hash:${digest}`);
+      const keyKnown = existingKeys.has(key);
+      const withHash = digest ? { ...candidate, import_hash: digest } : candidate;
+      // Exact fingerprint already stored → skip (unless user opts to re-send).
+      // Key-only match without hash still goes through so bulk can backfill.
+      if (hashKnown) duplicateRows.push(withHash);
+      else if (keyKnown && !digest) duplicateRows.push(withHash);
+      else freshRows.push(withHash);
     });
 
     return {
       valid: includeDuplicates ? [...freshRows, ...duplicateRows] : freshRows,
-      skipped: skippedRows,
       duplicateCount: duplicateRows.length,
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, headers, dataRows, mapping, dateFormat, amountFormat, categoryLookup, accountId, existingKeys, includeDuplicates, activePreset, t]);
+  }, [step, candidates, candidateHashes, existingKeys, includeDuplicates]);
 
   async function handleFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -428,16 +473,25 @@ export function CsvImportPage() {
       const withHashes: TransactionInput[] = [];
       for (const item of valid) {
         const occurredAt = item.occurred_at ?? toOccurredAtIso(item.date!, "00:00");
-        const import_hash = await computeImportHash({
-          accountId: item.account_id,
-          date: item.date ?? occurredAt.slice(0, 10),
-          occurredAt,
-          amount: item.amount,
-          description: item.description,
-          merchant: item.merchant ?? undefined,
-          presetId,
-        });
+        const import_hash =
+          item.import_hash ??
+          (await computeImportHash({
+            accountId: item.account_id,
+            date: item.date ?? occurredAt.slice(0, 10),
+            occurredAt,
+            amount: item.amount,
+            description: item.description,
+            merchant: item.merchant ?? undefined,
+            presetId,
+          }));
+        // Skip rows whose fingerprint is already on the account (e.g. race
+        // with preview, or include-duplicates off but hash matched late).
+        if (existingKeys.has(`hash:${import_hash}`) && !includeDuplicates) continue;
         withHashes.push({ ...item, occurred_at: occurredAt, import_hash });
+      }
+      if (withHashes.length === 0) {
+        setCreatedCount(0);
+        return;
       }
       const result = await bulkCreate.mutateAsync(withHashes);
       setCreatedCount(result.created);

@@ -54,5 +54,10 @@ def test_convert_csv_has_tbank_detectable_headers():
     assert "Сумма в валюте счёта" in header
     assert "Описание" in header
     assert "Статус" in header
+    assert "Сообщение" in header
     assert '"Ок"' in csv_text
     assert "Promo ad" not in csv_text
+    # Subtitle lands in Сообщение (notes), not category columns.
+    first_data = csv_text.splitlines()[1]
+    assert "Merchant One" in first_data
+    assert "Перевод•Т-Банк" in first_data
