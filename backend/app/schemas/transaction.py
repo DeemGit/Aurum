@@ -431,3 +431,16 @@ class GpbHtmlConvertRequest(BaseModel):
 class GpbHtmlConvertResult(BaseModel):
     csv: str
     row_count: int
+
+
+class AlfaHtmlConvertRequest(BaseModel):
+    """HTML paste from Alfa-Bank operation history → Alfa CSV for the wizard."""
+
+    html: str = Field(min_length=1)
+    # Used only when data-date is missing («сегодня» / «вчера» labels).
+    today: date_ | None = None
+
+
+class AlfaHtmlConvertResult(BaseModel):
+    csv: str
+    row_count: int

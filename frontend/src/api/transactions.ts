@@ -70,6 +70,11 @@ export function convertGpbHtmlStatement(html: string, today: string) {
   return api.post<{ csv: string; row_count: number }>("/transactions/import/gpb-html", { html, today });
 }
 
+/** Alfa-Bank HTML history paste → Alfa CSV for the import wizard. */
+export function convertAlfaHtmlStatement(html: string, today: string) {
+  return api.post<{ csv: string; row_count: number }>("/transactions/import/alfa-html", { html, today });
+}
+
 export function fetchTransferMatches(transactionId: number) {
   return api.get<{ candidates: { transaction: Transaction; delta_seconds: number }[] }>(
     `/transactions/${transactionId}/transfer-matches`

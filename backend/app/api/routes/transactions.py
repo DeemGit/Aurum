@@ -15,6 +15,8 @@ from app.models.enums import CategoryKind, TransactionType
 from app.models.tag import Tag
 from app.models.transaction import Transaction, TransactionImportHash, TransactionSplit
 from app.schemas.transaction import (
+    AlfaHtmlConvertRequest,
+    AlfaHtmlConvertResult,
     GpbHtmlConvertRequest,
     GpbHtmlConvertResult,
     TransactionBulkCreate,
@@ -33,6 +35,7 @@ from app.schemas.transaction import (
     split_rule_violation,
     transfer_rule_violation,
 )
+from app.services.alfa_html_statement import convert_alfa_html_to_csv
 from app.services.gpb_html_statement import convert_gpb_html_to_csv
 from app.services.cashback_service import (
     ensure_cashback_category_for_account,
@@ -321,6 +324,17 @@ async def convert_gpb_html_statement(payload: GpbHtmlConvertRequest) -> GpbHtmlC
     if row_count == 0:
         raise HTTPException(status_code=400, detail="No operations found in HTML")
     return GpbHtmlConvertResult(csv=csv_text, row_count=row_count)
+
+
+@router.post("/import/alfa-html", response_model=AlfaHtmlConvertResult)
+async def convert_alfa_html_statement(payload: AlfaHtmlConvertRequest) -> AlfaHtmlConvertResult:
+    """Turn a pasted Alfa-Bank history HTML fragment into Alfa CSV the import
+    wizard (alfabank preset) can consume. No DB writes."""
+    today = payload.today or date_.today()
+    csv_text, row_count = convert_alfa_html_to_csv(payload.html, today=today)
+    if row_count == 0:
+        raise HTTPException(status_code=400, detail="No operations found in HTML")
+    return AlfaHtmlConvertResult(csv=csv_text, row_count=row_count)
 
 
 @router.post("/bulk", response_model=TransactionBulkCreateResult, status_code=201)

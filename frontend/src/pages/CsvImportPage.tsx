@@ -7,7 +7,7 @@ import { Input, Label, Select } from "@/components/ui/Input";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useCategories } from "@/hooks/useCategories";
 import { useBulkCreateTransactions, useTransactionsForDuplicateCheck } from "@/hooks/useTransactions";
-import { convertGpbHtmlStatement } from "@/api/transactions";
+import { convertAlfaHtmlStatement, convertGpbHtmlStatement } from "@/api/transactions";
 import { translateCategoryName } from "@/lib/categoryLabels";
 import {
   BANK_PRESETS,
@@ -39,7 +39,7 @@ import { useTranslation } from "@/lib/i18n";
 import type { TransactionInput } from "@/types";
 
 type Step = "upload" | "map" | "preview";
-type UploadSource = "csv" | "gpb-html";
+type UploadSource = "csv" | "gpb-html" | "alfa-html";
 
 const NONE = "";
 
@@ -136,8 +136,10 @@ export function CsvImportPage() {
   const [importError, setImportError] = useState<string | null>(null);
   const [createdCount, setCreatedCount] = useState<number | null>(null);
   const [gpbHtml, setGpbHtml] = useState("");
-  const [gpbToday, setGpbToday] = useState(todayLocalIso);
+  const [alfaHtml, setAlfaHtml] = useState("");
+  const [htmlToday, setHtmlToday] = useState(todayLocalIso);
   const [gpbConverting, setGpbConverting] = useState(false);
+  const [alfaConverting, setAlfaConverting] = useState(false);
   const [convertedCsv, setConvertedCsv] = useState<string | null>(null);
   const [selectedIndexes, setSelectedIndexes] = useState<Set<number>>(() => new Set());
   const selectAllRef = useRef<HTMLInputElement>(null);
@@ -478,12 +480,26 @@ export function CsvImportPage() {
     setParseError(null);
     setGpbConverting(true);
     try {
-      const result = await convertGpbHtmlStatement(gpbHtml, gpbToday);
+      const result = await convertGpbHtmlStatement(gpbHtml, htmlToday);
       applyCsvText(result.csv, "gpb-statement.csv");
     } catch (error) {
       setParseError(error instanceof ApiError ? error.message : t("transactions.import.gpbConvertError"));
     } finally {
       setGpbConverting(false);
+    }
+  }
+
+  async function handleAlfaConvert() {
+    if (!accountId || !alfaHtml.trim()) return;
+    setParseError(null);
+    setAlfaConverting(true);
+    try {
+      const result = await convertAlfaHtmlStatement(alfaHtml, htmlToday);
+      applyCsvText(result.csv, "alfa-statement.csv");
+    } catch (error) {
+      setParseError(error instanceof ApiError ? error.message : t("transactions.import.alfaConvertError"));
+    } finally {
+      setAlfaConverting(false);
     }
   }
 
@@ -507,7 +523,8 @@ export function CsvImportPage() {
     setImportError(null);
     setConvertedCsv(null);
     setGpbHtml("");
-    setGpbToday(todayLocalIso());
+    setAlfaHtml("");
+    setHtmlToday(todayLocalIso());
     setParseError(null);
   }
 
@@ -641,6 +658,17 @@ export function CsvImportPage() {
               >
                 {t("transactions.import.sourceGpbHtml")}
               </Button>
+              <Button
+                type="button"
+                variant={uploadSource === "alfa-html" ? "primary" : "ghost"}
+                onClick={() => {
+                  setUploadSource("alfa-html");
+                  setParseError(null);
+                }}
+                className="sm:flex-1"
+              >
+                {t("transactions.import.sourceAlfaHtml")}
+              </Button>
             </div>
 
             {uploadSource === "csv" ? (
@@ -654,7 +682,7 @@ export function CsvImportPage() {
                 </Button>
                 <input ref={fileInputRef} type="file" accept=".csv,text/csv" onChange={handleFileSelected} className="hidden" />
               </>
-            ) : (
+            ) : uploadSource === "gpb-html" ? (
               <>
                 <p className="text-sm text-text-secondary">{t("transactions.import.gpbHtmlHint")}</p>
                 <div>
@@ -662,8 +690,8 @@ export function CsvImportPage() {
                   <Input
                     id="gpb-today"
                     type="date"
-                    value={gpbToday}
-                    onChange={(event) => setGpbToday(event.target.value)}
+                    value={htmlToday}
+                    onChange={(event) => setHtmlToday(event.target.value)}
                     className="sm:w-56"
                   />
                   <p className="mt-1 text-xs text-text-muted">{t("transactions.import.gpbTodayHint")}</p>
@@ -682,9 +710,43 @@ export function CsvImportPage() {
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Button
                     onClick={handleGpbConvert}
-                    disabled={!accountId || !gpbHtml.trim() || gpbConverting || !gpbToday}
+                    disabled={!accountId || !gpbHtml.trim() || gpbConverting || !htmlToday}
                   >
                     {gpbConverting ? t("transactions.import.gpbConverting") : t("transactions.import.gpbConvert")}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-text-secondary">{t("transactions.import.alfaHtmlHint")}</p>
+                <div>
+                  <Label htmlFor="alfa-today">{t("transactions.import.gpbTodayLabel")}</Label>
+                  <Input
+                    id="alfa-today"
+                    type="date"
+                    value={htmlToday}
+                    onChange={(event) => setHtmlToday(event.target.value)}
+                    className="sm:w-56"
+                  />
+                  <p className="mt-1 text-xs text-text-muted">{t("transactions.import.gpbTodayHint")}</p>
+                </div>
+                <div>
+                  <Label htmlFor="alfa-html">{t("transactions.import.alfaHtmlLabel")}</Label>
+                  <textarea
+                    id="alfa-html"
+                    value={alfaHtml}
+                    onChange={(event) => setAlfaHtml(event.target.value)}
+                    rows={10}
+                    className="w-full rounded-lg border border-border bg-surface-1 px-3 py-2 font-mono text-xs text-text-primary outline-none focus:border-series-1"
+                    placeholder={t("transactions.import.alfaHtmlPlaceholder")}
+                  />
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    onClick={handleAlfaConvert}
+                    disabled={!accountId || !alfaHtml.trim() || alfaConverting || !htmlToday}
+                  >
+                    {alfaConverting ? t("transactions.import.alfaConverting") : t("transactions.import.alfaConvert")}
                   </Button>
                 </div>
               </>
