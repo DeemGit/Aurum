@@ -510,12 +510,14 @@ async def update_transaction(
     elif (
         "type" in updates
         and effective_type == TransactionType.REFUND
-        and transaction.type == TransactionType.EXPENSE
+        and transaction.type != TransactionType.REFUND
     ):
-        # Expense→refund must not keep the purchase cashback pill. UI clears
-        # these on type change; partial PATCH may omit them; a full form save
-        # used to re-send the expense's positive amount — drop that carry-over.
-        # Explicit clawback (negative cashback_amount) is kept.
+        # Becoming a refund (from income, expense, …) must not keep purchase
+        # cashback or is_cashback. UI clears fields on type change; partial
+        # PATCH may omit them; a full form save used to re-send a positive
+        # amount — drop that carry-over. Explicit clawback (negative) is kept.
+        updates["is_cashback"] = False
+        effective_is_cashback = False
         amount_in_patch = "cashback_amount" in updates
         explicit_amount = updates.get("cashback_amount") if amount_in_patch else None
         keep_clawback = (

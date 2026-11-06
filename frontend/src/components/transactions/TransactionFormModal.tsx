@@ -202,7 +202,9 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
 
   useEffect(() => {
     if (!open || cashbackAmountTouched) return;
-    if (form.type !== "expense" && form.type !== "refund") return;
+    // Refund clawback is manual only — auto-compute would treat the refund
+    // amount like a purchase and show the full expense cashback as a pill.
+    if (form.type !== "expense") return;
     if (!form.cashback_category_id || !form.amount || !selectedAccount) {
       if (!form.cashback_category_id && form.cashback_amount !== "") {
         setForm((prev) => ({ ...prev, cashback_amount: "" }));
@@ -405,22 +407,16 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
             value={form.type}
             onChange={(event) => {
               const nextType = event.target.value as TransactionType;
-              setForm((prev) => {
-                const prevCashback = prev.type === "expense" || prev.type === "refund";
-                const nextCashback = nextType === "expense" || nextType === "refund";
-                // Drop cashback when leaving expense/refund, or when flipping
-                // expense↔refund — otherwise the expense's +N pill sticks on the refund.
-                const resetCashback =
-                  !nextCashback || (prevCashback && prev.type !== nextType);
-                return {
-                  ...prev,
-                  type: nextType,
-                  category_id: "",
-                  ...(resetCashback
-                    ? { cashback_category_id: "", cashback_amount: "" }
-                    : {}),
-                };
-              });
+              // Any type change drops cashback — income→refund used to keep
+              // fields empty but re-enable auto-compute, which then filled the
+              // refund with a positive "purchase" cashback pill.
+              setForm((prev) => ({
+                ...prev,
+                type: nextType,
+                category_id: "",
+                cashback_category_id: "",
+                cashback_amount: "",
+              }));
               setCashbackAmountTouched(false);
               if (nextType === "transfer" || nextType === "refund") setSplitMode(false);
             }}

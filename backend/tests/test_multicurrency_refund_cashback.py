@@ -550,6 +550,59 @@ async def test_expense_to_refund_clears_cashback_unless_sent(client: AsyncClient
     assert money(clawback.json()["cashback_amount"]) == Decimal("-2.00")
 
 
+async def test_income_to_refund_clears_is_cashback(client: AsyncClient, categories):
+    """Flipping income→refund must clear is_cashback and not invent cashback_amount."""
+    account = (
+        await client.post("/accounts", json={"name": "Income CB", "type": "debit_card", "currency": "RUB"})
+    ).json()
+    groceries = categories["Groceries"]["id"]
+    salary = categories["Salary"]["id"]
+
+    purchase = await client.post(
+        "/transactions",
+        json=_txn(
+            account["id"],
+            category_id=groceries,
+            amount="200.00",
+            date="2026-10-01",
+            description="purchase for refund",
+        ),
+    )
+    assert purchase.status_code == 201
+    purchase_id = purchase.json()["id"]
+
+    income = await client.post(
+        "/transactions",
+        json={
+            "account_id": account["id"],
+            "category_id": salary,
+            "type": "income",
+            "amount": "50.00",
+            "description": "bank cashback income",
+            "date": "2026-10-02",
+            "is_cashback": True,
+        },
+    )
+    assert income.status_code == 201, income.text
+    assert income.json()["is_cashback"] is True
+    income_id = income.json()["id"]
+
+    converted = await client.patch(
+        f"/transactions/{income_id}",
+        json={
+            "type": "refund",
+            "category_id": None,
+            "refund_of_transaction_id": purchase_id,
+        },
+    )
+    assert converted.status_code == 200, converted.text
+    body = converted.json()
+    assert body["type"] == "refund"
+    assert body["is_cashback"] is False
+    assert body["cashback_amount"] is None
+    assert body["cashback_category_id"] is None
+
+
 async def test_filter_transactions_by_account(client: AsyncClient, account_id, categories):
     other = (await client.post("/accounts", json={"name": "Other", "type": "checking", "currency": "USD"})).json()
     groceries = categories["Groceries"]["id"]
