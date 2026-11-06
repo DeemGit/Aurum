@@ -130,7 +130,6 @@ export function CsvImportPage() {
   const [mapping, setMapping] = useState<Mapping>({ date: "", amount: "", description: "", merchant: "", notes: "", category: "" });
   const [dateFormat, setDateFormat] = useState<DateFormat>("YYYY-MM-DD");
   const [amountFormat, setAmountFormat] = useState<AmountFormat>("auto");
-  const [includeDuplicates, setIncludeDuplicates] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [createdCount, setCreatedCount] = useState<number | null>(null);
@@ -345,11 +344,13 @@ export function CsvImportPage() {
     };
   }, [step, candidates, activePreset?.id]);
 
-  const { valid, duplicateCount } = useMemo(() => {
-    if (step !== "preview") return { valid: [] as TransactionInput[], duplicateCount: 0 };
+  const { valid, isDuplicate, duplicateCount } = useMemo(() => {
+    if (step !== "preview") {
+      return { valid: [] as TransactionInput[], isDuplicate: [] as boolean[], duplicateCount: 0 };
+    }
 
-    const freshRows: TransactionInput[] = [];
-    const duplicateRows: TransactionInput[] = [];
+    const rows: TransactionInput[] = [];
+    const dupFlags: boolean[] = [];
 
     candidates.forEach((candidate, index) => {
       const digest = candidateHashes[index] ?? null;
@@ -357,32 +358,32 @@ export function CsvImportPage() {
       const hashKnown = digest !== null && existingKeys.has(`hash:${digest}`);
       const keyKnown = existingKeys.has(key);
       const withHash = digest ? { ...candidate, import_hash: digest } : candidate;
-      // Exact fingerprint already stored → skip (unless user opts to re-send).
-      // Key-only match without hash still goes through so bulk can backfill.
-      if (hashKnown) duplicateRows.push(withHash);
-      else if (keyKnown && !digest) duplicateRows.push(withHash);
-      else freshRows.push(withHash);
+      // Hash match or same date|amount|description already on the account.
+      rows.push(withHash);
+      dupFlags.push(hashKnown || keyKnown);
     });
 
     return {
-      valid: includeDuplicates ? [...freshRows, ...duplicateRows] : freshRows,
-      duplicateCount: duplicateRows.length,
+      valid: rows,
+      isDuplicate: dupFlags,
+      duplicateCount: dupFlags.filter(Boolean).length,
     };
-  }, [step, candidates, candidateHashes, existingKeys, includeDuplicates]);
+  }, [step, candidates, candidateHashes, existingKeys]);
 
-  // Re-select every preview row when the candidate list changes (enter preview,
-  // toggle duplicates, re-hash). Default = all selected.
+  // When the preview list changes, select only non-duplicates by default.
   const validSelectionKey = useMemo(
     () =>
       valid
-        .map((row) => `${row.date}|${row.amount}|${row.description}|${row.import_hash ?? ""}`)
+        .map((row, index) => `${row.date}|${row.amount}|${row.description}|${row.import_hash ?? ""}|${isDuplicate[index] ? "1" : "0"}`)
         .join("\n"),
-    [valid],
+    [valid, isDuplicate],
   );
 
   useEffect(() => {
-    setSelectedIndexes(new Set(valid.map((_, index) => index)));
-  }, [validSelectionKey, valid]);
+    setSelectedIndexes(
+      new Set(valid.flatMap((_, index) => (isDuplicate[index] ? [] : [index]))),
+    );
+  }, [validSelectionKey, valid, isDuplicate]);
 
   const selectedCount = useMemo(() => {
     let count = 0;
@@ -433,7 +434,6 @@ export function CsvImportPage() {
     setMapping(defaults.mapping);
     setDateFormat(defaults.dateFormat);
     setAmountFormat(defaults.amountFormat);
-    setIncludeDuplicates(false);
     setStep("map");
   }
 
@@ -452,7 +452,6 @@ export function CsvImportPage() {
     setMapping(defaults.mapping);
     setDateFormat(defaults.dateFormat);
     setAmountFormat(defaults.amountFormat);
-    setIncludeDuplicates(false);
     setParseError(null);
     setConvertedCsv(csvText);
     setStep("map");
@@ -531,9 +530,9 @@ export function CsvImportPage() {
             merchant: item.merchant ?? undefined,
             presetId,
           }));
-        // Skip rows whose fingerprint is already on the account (e.g. race
-        // with preview, or include-duplicates off but hash matched late).
-        if (existingKeys.has(`hash:${import_hash}`) && !includeDuplicates) continue;
+        // Known fingerprint: backend would skip; don't send unless the user
+        // explicitly selected a row that still needs hash backfill (no hash yet).
+        if (existingKeys.has(`hash:${import_hash}`)) continue;
         withHashes.push({ ...item, occurred_at: occurredAt, import_hash });
       }
       if (withHashes.length === 0) {
@@ -881,20 +880,9 @@ export function CsvImportPage() {
                 )}
 
                 {duplicateCount > 0 && (
-                  <div className="flex items-start gap-2 rounded-lg border border-border bg-surface-2 p-3 text-xs text-text-muted">
-                    <label className="flex items-start gap-2">
-                      <input
-                        type="checkbox"
-                        checked={includeDuplicates}
-                        onChange={(event) => setIncludeDuplicates(event.target.checked)}
-                        className="mt-0.5 h-3.5 w-3.5 accent-text-primary"
-                      />
-                      <span>
-                        {t("transactions.import.duplicatesFound", { count: duplicateCount })}{" "}
-                        {t("transactions.import.includeDuplicates")}
-                      </span>
-                    </label>
-                  </div>
+                  <p className="rounded-lg border border-border bg-surface-2 p-3 text-xs text-text-muted">
+                    {t("transactions.import.duplicatesFound", { count: duplicateCount })}
+                  </p>
                 )}
 
                 {valid.length > 0 && (
