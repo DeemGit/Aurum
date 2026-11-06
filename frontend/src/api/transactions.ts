@@ -62,6 +62,11 @@ export function bulkCreateTransactions(items: TransactionInput[]) {
   return api.post<{ created: number; skipped_duplicates: number }>("/transactions/bulk", { items });
 }
 
+/** Gazprombank HTML history paste → CSV for the import wizard. */
+export function convertGpbHtmlStatement(html: string, today: string) {
+  return api.post<{ csv: string; row_count: number }>("/transactions/import/gpb-html", { html, today });
+}
+
 export function fetchTransferMatches(transactionId: number) {
   return api.get<{ candidates: { transaction: Transaction; delta_seconds: number }[] }>(
     `/transactions/${transactionId}/transfer-matches`

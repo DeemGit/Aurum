@@ -3,10 +3,11 @@ import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, Upload } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Label, Select } from "@/components/ui/Input";
+import { Input, Label, Select } from "@/components/ui/Input";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useCategories } from "@/hooks/useCategories";
 import { useBulkCreateTransactions, useTransactionsForDuplicateCheck } from "@/hooks/useTransactions";
+import { convertGpbHtmlStatement } from "@/api/transactions";
 import { translateCategoryName } from "@/lib/categoryLabels";
 import {
   BANK_PRESETS,
@@ -36,8 +37,17 @@ import { useTranslation } from "@/lib/i18n";
 import type { TransactionInput } from "@/types";
 
 type Step = "upload" | "map" | "preview";
+type UploadSource = "csv" | "gpb-html";
 
 const NONE = "";
+
+function todayLocalIso() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 // WHATWG encoding labels TextDecoder understands. UTF-8 covers most modern
 // exports; the rest are here because bank CSVs — especially older or
@@ -112,6 +122,7 @@ export function CsvImportPage() {
 
   const [accountId, setAccountId] = useState("");
   const [step, setStep] = useState<Step>("upload");
+  const [uploadSource, setUploadSource] = useState<UploadSource>("csv");
   const [fileName, setFileName] = useState("");
   const [fileBuffer, setFileBuffer] = useState<ArrayBuffer | null>(null);
   const [encoding, setEncoding] = useState<Encoding>("utf-8");
@@ -123,6 +134,10 @@ export function CsvImportPage() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [createdCount, setCreatedCount] = useState<number | null>(null);
+  const [gpbHtml, setGpbHtml] = useState("");
+  const [gpbToday, setGpbToday] = useState(todayLocalIso);
+  const [gpbConverting, setGpbConverting] = useState(false);
+  const [convertedCsv, setConvertedCsv] = useState<string | null>(null);
 
   // Re-decoded whenever `encoding` changes, so picking a different encoding
   // on the map screen (because the auto-detected guess came out wrong)
@@ -346,6 +361,53 @@ export function CsvImportPage() {
     setStep("map");
   }
 
+  function applyCsvText(csvText: string, name: string) {
+    const buffer = new TextEncoder().encode(csvText).buffer;
+    const rows = parseCsv(csvText);
+    if (rows.length < 2) {
+      setParseError(t("transactions.import.errorEmptyFile"));
+      return false;
+    }
+    const [headerRow] = rows;
+    const defaults = resolveDefaults(headerRow, resolvePreset(headerRow, presetChoice));
+    setFileName(name);
+    setFileBuffer(buffer);
+    setEncoding("utf-8");
+    setMapping(defaults.mapping);
+    setDateFormat(defaults.dateFormat);
+    setAmountFormat(defaults.amountFormat);
+    setIncludeDuplicates(false);
+    setParseError(null);
+    setConvertedCsv(csvText);
+    setStep("map");
+    return true;
+  }
+
+  async function handleGpbConvert() {
+    if (!accountId || !gpbHtml.trim()) return;
+    setParseError(null);
+    setGpbConverting(true);
+    try {
+      const result = await convertGpbHtmlStatement(gpbHtml, gpbToday);
+      applyCsvText(result.csv, "gpb-statement.csv");
+    } catch (error) {
+      setParseError(error instanceof ApiError ? error.message : t("transactions.import.gpbConvertError"));
+    } finally {
+      setGpbConverting(false);
+    }
+  }
+
+  function downloadConvertedCsv() {
+    if (!convertedCsv) return;
+    const blob = new Blob([convertedCsv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName || "gpb-statement.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   function startOver() {
     setStep("upload");
     setFileName("");
@@ -353,6 +415,10 @@ export function CsvImportPage() {
     setEncoding("utf-8");
     setCreatedCount(null);
     setImportError(null);
+    setConvertedCsv(null);
+    setGpbHtml("");
+    setGpbToday(todayLocalIso());
+    setParseError(null);
   }
 
   async function handleImport() {
@@ -437,14 +503,77 @@ export function CsvImportPage() {
             <CardTitle>{t("transactions.import.uploadTitle")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <p className="text-sm text-text-secondary">{t("transactions.import.uploadHint")}</p>
-            {presetSelect("upload-preset")}
-            <p className="text-xs text-text-muted">{t("transactions.import.presetHint")}</p>
-            <Button onClick={() => fileInputRef.current?.click()} disabled={!accountId}>
-              <Upload size={16} />
-              {t("transactions.import.chooseFile")}
-            </Button>
-            <input ref={fileInputRef} type="file" accept=".csv,text/csv" onChange={handleFileSelected} className="hidden" />
+            <div className="flex flex-col gap-2 sm:flex-row sm:gap-3">
+              <Button
+                type="button"
+                variant={uploadSource === "csv" ? "primary" : "ghost"}
+                onClick={() => {
+                  setUploadSource("csv");
+                  setParseError(null);
+                }}
+                className="sm:flex-1"
+              >
+                {t("transactions.import.sourceCsv")}
+              </Button>
+              <Button
+                type="button"
+                variant={uploadSource === "gpb-html" ? "primary" : "ghost"}
+                onClick={() => {
+                  setUploadSource("gpb-html");
+                  setParseError(null);
+                }}
+                className="sm:flex-1"
+              >
+                {t("transactions.import.sourceGpbHtml")}
+              </Button>
+            </div>
+
+            {uploadSource === "csv" ? (
+              <>
+                <p className="text-sm text-text-secondary">{t("transactions.import.uploadHint")}</p>
+                {presetSelect("upload-preset")}
+                <p className="text-xs text-text-muted">{t("transactions.import.presetHint")}</p>
+                <Button onClick={() => fileInputRef.current?.click()} disabled={!accountId}>
+                  <Upload size={16} />
+                  {t("transactions.import.chooseFile")}
+                </Button>
+                <input ref={fileInputRef} type="file" accept=".csv,text/csv" onChange={handleFileSelected} className="hidden" />
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-text-secondary">{t("transactions.import.gpbHtmlHint")}</p>
+                <div>
+                  <Label htmlFor="gpb-today">{t("transactions.import.gpbTodayLabel")}</Label>
+                  <Input
+                    id="gpb-today"
+                    type="date"
+                    value={gpbToday}
+                    onChange={(event) => setGpbToday(event.target.value)}
+                    className="sm:w-56"
+                  />
+                  <p className="mt-1 text-xs text-text-muted">{t("transactions.import.gpbTodayHint")}</p>
+                </div>
+                <div>
+                  <Label htmlFor="gpb-html">{t("transactions.import.gpbHtmlLabel")}</Label>
+                  <textarea
+                    id="gpb-html"
+                    value={gpbHtml}
+                    onChange={(event) => setGpbHtml(event.target.value)}
+                    rows={10}
+                    className="w-full rounded-lg border border-border bg-surface-1 px-3 py-2 font-mono text-xs text-text-primary outline-none focus:border-series-1"
+                    placeholder={t("transactions.import.gpbHtmlPlaceholder")}
+                  />
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    onClick={handleGpbConvert}
+                    disabled={!accountId || !gpbHtml.trim() || gpbConverting || !gpbToday}
+                  >
+                    {gpbConverting ? t("transactions.import.gpbConverting") : t("transactions.import.gpbConvert")}
+                  </Button>
+                </div>
+              </>
+            )}
             {!accountId && <p className="text-xs text-text-muted">{t("transactions.import.pickAccountFirst")}</p>}
             {parseError && <p className="text-sm text-danger">{parseError}</p>}
           </CardContent>
@@ -608,10 +737,15 @@ export function CsvImportPage() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
               <Button variant="ghost" onClick={startOver}>
                 {t("transactions.import.startOver")}
               </Button>
+              {convertedCsv && (
+                <Button variant="secondary" type="button" onClick={downloadConvertedCsv}>
+                  {t("transactions.import.downloadCsv")}
+                </Button>
+              )}
               <Button disabled={!mappingComplete} onClick={() => setStep("preview")}>
                 {t("transactions.import.previewButton")}
               </Button>

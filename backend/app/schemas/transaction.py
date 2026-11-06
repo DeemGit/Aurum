@@ -409,3 +409,16 @@ class TransferMergeRequest(BaseModel):
     exchange_rate: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=8)
     fee_amount: Decimal = Field(default=Decimal("0"), ge=0, max_digits=14, decimal_places=2)
     transfer_amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+
+
+class GpbHtmlConvertRequest(BaseModel):
+    """HTML paste from Gazprombank operation history → CSV for the import wizard."""
+
+    html: str = Field(min_length=1)
+    # Calendar day that labels like «Сегодня» / «Вчера» resolve against.
+    today: date_ | None = None
+
+
+class GpbHtmlConvertResult(BaseModel):
+    csv: str
+    row_count: int

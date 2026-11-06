@@ -15,6 +15,8 @@ from app.models.enums import CategoryKind, TransactionType
 from app.models.tag import Tag
 from app.models.transaction import Transaction, TransactionImportHash, TransactionSplit
 from app.schemas.transaction import (
+    GpbHtmlConvertRequest,
+    GpbHtmlConvertResult,
     TransactionBulkCreate,
     TransactionBulkCreateResult,
     TransactionCreate,
@@ -31,6 +33,7 @@ from app.schemas.transaction import (
     split_rule_violation,
     transfer_rule_violation,
 )
+from app.services.gpb_html_statement import convert_gpb_html_to_csv
 from app.services.cashback_service import (
     ensure_cashback_category_for_account,
     resolve_expense_cashback_amount,
@@ -306,6 +309,17 @@ async def create_transaction(payload: TransactionCreate, session: AsyncSession =
             raise HTTPException(status_code=409, detail="Duplicate import_hash for this account") from exc
         raise
     return await _load_transaction(session, transaction.id)
+
+
+@router.post("/import/gpb-html", response_model=GpbHtmlConvertResult)
+async def convert_gpb_html_statement(payload: GpbHtmlConvertRequest) -> GpbHtmlConvertResult:
+    """Turn a pasted Gazprombank history HTML fragment into a CSV the existing
+    import wizard (tbank-compatible headers) can consume. No DB writes."""
+    today = payload.today or date_.today()
+    csv_text, row_count = convert_gpb_html_to_csv(payload.html, today=today)
+    if row_count == 0:
+        raise HTTPException(status_code=400, detail="No operations found in HTML")
+    return GpbHtmlConvertResult(csv=csv_text, row_count=row_count)
 
 
 @router.post("/bulk", response_model=TransactionBulkCreateResult, status_code=201)
