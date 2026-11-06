@@ -405,7 +405,23 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
             value={form.type}
             onChange={(event) => {
               const nextType = event.target.value as TransactionType;
-              setForm((prev) => ({ ...prev, type: nextType, category_id: "" }));
+              setForm((prev) => {
+                const prevCashback = prev.type === "expense" || prev.type === "refund";
+                const nextCashback = nextType === "expense" || nextType === "refund";
+                // Drop cashback when leaving expense/refund, or when flipping
+                // expense↔refund — otherwise the expense's +N pill sticks on the refund.
+                const resetCashback =
+                  !nextCashback || (prevCashback && prev.type !== nextType);
+                return {
+                  ...prev,
+                  type: nextType,
+                  category_id: "",
+                  ...(resetCashback
+                    ? { cashback_category_id: "", cashback_amount: "" }
+                    : {}),
+                };
+              });
+              setCashbackAmountTouched(false);
               if (nextType === "transfer" || nextType === "refund") setSplitMode(false);
             }}
           >

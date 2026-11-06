@@ -468,6 +468,88 @@ async def test_expense_cashback_auto_and_override(client: AsyncClient, categorie
     assert money(base.json()["cashback_amount"]) == Decimal("54")
 
 
+async def test_expense_to_refund_clears_cashback_unless_sent(client: AsyncClient, categories):
+    """Flipping expense→refund must not keep the purchase cashback on the refund row."""
+    account = (
+        await client.post("/accounts", json={"name": "CB Card", "type": "debit_card", "currency": "RUB"})
+    ).json()
+    cat = (
+        await client.post("/cashback-categories", json={"account_id": account["id"], "name": "Shop"})
+    ).json()
+    await client.put(
+        f"/accounts/{account['id']}/cashback-rates",
+        json={"year": 2026, "month": 9, "rates": [{"cashback_category_id": cat["id"], "percent": "5"}]},
+    )
+    groceries = categories["Groceries"]["id"]
+
+    purchase = await client.post(
+        "/transactions",
+        json=_txn(
+            account["id"],
+            category_id=groceries,
+            amount="200.00",
+            date="2026-09-01",
+            description="keep",
+        ),
+    )
+    assert purchase.status_code == 201
+    purchase_id = purchase.json()["id"]
+
+    mistaken = await client.post(
+        "/transactions",
+        json=_txn(
+            account["id"],
+            category_id=groceries,
+            amount="50.00",
+            date="2026-09-02",
+            description="was expense",
+            cashback_category_id=cat["id"],
+        ),
+    )
+    assert mistaken.status_code == 201, mistaken.text
+    assert money(mistaken.json()["cashback_amount"]) == Decimal("2")
+    mistaken_id = mistaken.json()["id"]
+
+    # Partial PATCH: type flip only — cashback from the expense must not stick.
+    cleared = await client.patch(
+        f"/transactions/{mistaken_id}",
+        json={
+            "type": "refund",
+            "category_id": None,
+            "refund_of_transaction_id": purchase_id,
+        },
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["cashback_amount"] is None
+    assert cleared.json()["cashback_category_id"] is None
+
+    # Explicit clawback on the same kind of flip is preserved.
+    again = await client.post(
+        "/transactions",
+        json=_txn(
+            account["id"],
+            category_id=groceries,
+            amount="80.00",
+            date="2026-09-03",
+            description="expense again",
+            cashback_category_id=cat["id"],
+        ),
+    )
+    assert again.status_code == 201, again.text
+    clawback = await client.patch(
+        f"/transactions/{again.json()['id']}",
+        json={
+            "type": "refund",
+            "category_id": None,
+            "refund_of_transaction_id": purchase_id,
+            "cashback_amount": "-2.00",
+            "cashback_category_id": cat["id"],
+        },
+    )
+    assert clawback.status_code == 200, clawback.text
+    assert money(clawback.json()["cashback_amount"]) == Decimal("-2.00")
+
+
 async def test_filter_transactions_by_account(client: AsyncClient, account_id, categories):
     other = (await client.post("/accounts", json={"name": "Other", "type": "checking", "currency": "USD"})).json()
     groceries = categories["Groceries"]["id"]
