@@ -391,7 +391,11 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
     <Dialog
       open={open}
       onClose={onClose}
-      title={transaction ? t("transactions.form.editTitle") : t("transactions.form.newTitle")}
+      title={
+        transaction
+          ? t("transactions.form.editTitle", { id: transaction.id })
+          : t("transactions.form.newTitle")
+      }
     >
       <form onSubmit={handleSubmit} className="space-y-3">
         <div>
