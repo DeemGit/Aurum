@@ -121,13 +121,20 @@ def split_rule_violation(
 
 
 def normalize_occurred_at(*, date: date_ | None, occurred_at: datetime | None) -> tuple[date_, datetime]:
-    """Derive the (date, occurred_at) pair from whichever side the client sent."""
+    """Derive the (date, occurred_at) pair from whichever side the client sent.
+
+    ``occurred_at`` is stored as UTC, but the calendar ``date`` must stay the
+    bank/wall-clock day — converting first and taking ``.date()`` would turn
+    ``2026-11-01T02:23+03:00`` into ``2026-10-31``.
+    """
     if occurred_at is not None:
+        # Wall-clock calendar day before converting the absolute moment to UTC.
+        wall_date = occurred_at.date()
         if occurred_at.tzinfo is None:
-            occurred_at = occurred_at.replace(tzinfo=timezone.utc)
+            occurred_utc = occurred_at.replace(tzinfo=timezone.utc)
         else:
-            occurred_at = occurred_at.astimezone(timezone.utc)
-        return occurred_at.date(), occurred_at
+            occurred_utc = occurred_at.astimezone(timezone.utc)
+        return (date if date is not None else wall_date), occurred_utc
     if date is None:
         raise ValueError("date or occurred_at is required")
     return date, datetime(date.year, date.month, date.day, tzinfo=timezone.utc)
