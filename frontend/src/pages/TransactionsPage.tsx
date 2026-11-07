@@ -315,7 +315,12 @@ export function TransactionsPage() {
         </CardContent>
       </Card>
 
-      <TransactionFormModal open={modalOpen} onClose={() => setModalOpen(false)} transaction={editingTransaction} />
+      <TransactionFormModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        transaction={editingTransaction}
+        defaultAccountId={accountId ? Number(accountId) : null}
+      />
     </div>
   );
 }

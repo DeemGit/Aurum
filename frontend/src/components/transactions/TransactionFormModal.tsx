@@ -27,6 +27,33 @@ interface TransactionFormModalProps {
   open: boolean;
   onClose: () => void;
   transaction?: Transaction | null;
+  /** When creating, prefer this account (e.g. the transactions-page filter). */
+  defaultAccountId?: number | null;
+}
+
+const LAST_DEFAULTS_KEY = "aurum:last-transaction-defaults";
+
+interface LastTransactionDefaults {
+  account_id: number;
+  type: TransactionType;
+}
+
+function readLastDefaults(): LastTransactionDefaults | null {
+  try {
+    const raw = localStorage.getItem(LAST_DEFAULTS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LastTransactionDefaults>;
+    if (typeof parsed.account_id !== "number" || typeof parsed.type !== "string") return null;
+    const allowed: TransactionType[] = ["expense", "income", "transfer", "refund"];
+    if (!allowed.includes(parsed.type as TransactionType)) return null;
+    return { account_id: parsed.account_id, type: parsed.type as TransactionType };
+  } catch {
+    return null;
+  }
+}
+
+function writeLastDefaults(accountId: number, type: TransactionType): void {
+  localStorage.setItem(LAST_DEFAULTS_KEY, JSON.stringify({ account_id: accountId, type }));
 }
 
 function todayIso() {
@@ -82,7 +109,12 @@ function toCents(value: string): number {
   return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
 }
 
-export function TransactionFormModal({ open, onClose, transaction }: TransactionFormModalProps) {
+export function TransactionFormModal({
+  open,
+  onClose,
+  transaction,
+  defaultAccountId = null,
+}: TransactionFormModalProps) {
   const { t, language } = useTranslation();
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
@@ -180,14 +212,26 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
       // Keep stored cashback until the user changes the cashback category.
       setCashbackAmountTouched(true);
     } else {
-      setForm({ ...EMPTY_FORM, account_id: accounts?.[0] ? String(accounts[0].id) : "" });
+      // Create: filter account → last saved create → first account in list.
+      const last = readLastDefaults();
+      const accountIds = new Set((accounts ?? []).map((account) => account.id));
+      let accountId = "";
+      if (defaultAccountId != null && accountIds.has(defaultAccountId)) {
+        accountId = String(defaultAccountId);
+      } else if (last && accountIds.has(last.account_id)) {
+        accountId = String(last.account_id);
+      } else if (accounts?.[0]) {
+        accountId = String(accounts[0].id);
+      }
+      const type = last?.type ?? EMPTY_FORM.type;
+      setForm({ ...EMPTY_FORM, account_id: accountId, type });
       setTags([]);
       setSplitMode(false);
       setSplitRows([emptySplitRow(), emptySplitRow()]);
       setCashbackAmountTouched(false);
     }
     setError(null);
-  }, [open, transaction, accounts]);
+  }, [open, transaction, accounts, defaultAccountId]);
 
   useEffect(() => {
     if (!open || !form.cashback_category_id || !cashbackCategoriesQuery.data) return;
@@ -381,6 +425,7 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
         await updateTransaction.mutateAsync({ id: transaction.id, input: payload });
       } else {
         await createTransaction.mutateAsync(payload);
+        writeLastDefaults(payload.account_id, payload.type);
       }
       onClose();
     } catch {
@@ -400,6 +445,33 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
       }
     >
       <form onSubmit={handleSubmit} className="space-y-3">
+        <div>
+          <Label htmlFor="account">{t("transactions.form.accountLabel")}</Label>
+          <Select
+            id="account"
+            required
+            value={form.account_id}
+            onChange={(event) => {
+              setCashbackAmountTouched(false);
+              setForm((prev) => ({
+                ...prev,
+                account_id: event.target.value,
+                cashback_category_id: "",
+                cashback_amount: "",
+              }));
+            }}
+          >
+            <option value="" disabled>
+              {t("transactions.form.selectAccount")}
+            </option>
+            {accounts?.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name} ({account.currency})
+              </option>
+            ))}
+          </Select>
+        </div>
+
         <div>
           <Label htmlFor="type">{t("transactions.form.typeLabel")}</Label>
           <Select
@@ -565,33 +637,6 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
             value={form.description}
             onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
           />
-        </div>
-
-        <div>
-          <Label htmlFor="account">{t("transactions.form.accountLabel")}</Label>
-          <Select
-            id="account"
-            required
-            value={form.account_id}
-            onChange={(event) => {
-              setCashbackAmountTouched(false);
-              setForm((prev) => ({
-                ...prev,
-                account_id: event.target.value,
-                cashback_category_id: "",
-                cashback_amount: "",
-              }));
-            }}
-          >
-            <option value="" disabled>
-              {t("transactions.form.selectAccount")}
-            </option>
-            {accounts?.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name} ({account.currency})
-              </option>
-            ))}
-          </Select>
         </div>
 
         {form.type === "transfer" ? (
