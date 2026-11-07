@@ -220,6 +220,47 @@ async def test_search_with_no_matches_returns_empty(client: AsyncClient, account
     assert body["items"] == []
 
 
+async def test_search_matches_amount_truncated_to_whole_units(client: AsyncClient, account_id, categories):
+    """Integer search finds amounts sharing that whole part (1842 → 1842.12)."""
+    category_id = categories["Groceries"]["id"]
+    await client.post(
+        "/transactions",
+        json=_txn(
+            account_id,
+            category_id=category_id,
+            amount="1842.12",
+            description="fractional match",
+            date="2026-01-10",
+        ),
+    )
+    await client.post(
+        "/transactions",
+        json=_txn(
+            account_id,
+            category_id=category_id,
+            amount="1843.00",
+            description="neighbor amount",
+            date="2026-01-11",
+        ),
+    )
+    await client.post(
+        "/transactions",
+        json=_txn(
+            account_id,
+            category_id=category_id,
+            amount="10.00",
+            description="order 1842 ticket",
+            date="2026-01-12",
+        ),
+    )
+
+    resp = await client.get("/transactions", params={"search": "1842"})
+    body = resp.json()
+    assert body["total"] == 2
+    descriptions = {item["description"] for item in body["items"]}
+    assert descriptions == {"Fractional match", "Order 1842 ticket"}
+
+
 async def test_pagination_covers_every_item_with_no_overlap(client: AsyncClient, account_id, categories):
     category_id = categories["Groceries"]["id"]
     for day in range(1, 26):

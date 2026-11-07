@@ -195,12 +195,18 @@ async def list_transactions(
         # Lets the user find a transaction from any period by keyword (e.g. an
         # item bought months ago) without knowing which month to look in first —
         # matches description, merchant, and notes so any of those fields can surface it.
-        pattern = f"%{search.strip()}%"
-        search_clause = or_(
+        # An all-digit query also matches amount truncated to whole units
+        # (search "1842" → 1842.00 and 1842.12).
+        query = search.strip()
+        pattern = f"%{query}%"
+        clauses = [
             Transaction.description.ilike(pattern),
             Transaction.merchant.ilike(pattern),
             Transaction.notes.ilike(pattern),
-        )
+        ]
+        if query.isdigit():
+            clauses.append(func.trunc(Transaction.amount) == Decimal(query))
+        search_clause = or_(*clauses)
         stmt = stmt.where(search_clause)
         count_stmt = count_stmt.where(search_clause)
 
