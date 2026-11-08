@@ -492,6 +492,129 @@ async def test_import_link_candidates_and_bulk_dest_soft_match(client: AsyncClie
     assert any(h["import_hash"] == digest and h["account_id"] == b["id"] for h in transfer_row["import_hashes"])
 
 
+async def test_import_link_candidates_prefer_expense_without_hash(client: AsyncClient, categories):
+    """Manual expense/income without fingerprint must surface for force-link."""
+    a = (await client.post("/accounts", json={"name": "CardLink", "type": "checking", "currency": "USD"})).json()
+    b = (await client.post("/accounts", json={"name": "OtherLink", "type": "checking", "currency": "USD"})).json()
+    groceries = categories["Groceries"]["id"]
+    salary = categories["Salary"]["id"]
+
+    expense = await client.post(
+        "/transactions",
+        json=_txn(
+            a["id"],
+            category_id=groceries,
+            amount="55.00",
+            date="2026-10-05",
+            description="manual shop",
+        ),
+    )
+    assert expense.status_code == 201
+    expense_id = expense.json()["id"]
+    assert expense.json()["import_hash"] is None
+
+    # Same-day transfer on the account — should rank after the hash-less expense.
+    transfer = await client.post(
+        "/transactions",
+        json={
+            "account_id": a["id"],
+            "transfer_account_id": b["id"],
+            "type": "transfer",
+            "amount": "55.00",
+            "description": "same amount transfer",
+            "date": "2026-10-05",
+            "import_hash": "7" * 64,
+        },
+    )
+    assert transfer.status_code == 201, transfer.text
+
+    income_noise = await client.post(
+        "/transactions",
+        json=_txn(
+            a["id"],
+            type="income",
+            category_id=salary,
+            amount="55.00",
+            date="2026-10-05",
+            description="unrelated income",
+        ),
+    )
+    assert income_noise.status_code == 201
+
+    candidates = await client.get(
+        "/transactions/import-link-candidates",
+        params={"account_id": a["id"], "amount": "55.00", "date": "2026-10-05", "type": "expense"},
+    )
+    assert candidates.status_code == 200, candidates.text
+    body = candidates.json()
+    ids = [row["id"] for row in body]
+    assert expense_id in ids
+    assert transfer.json()["id"] in ids
+    assert income_noise.json()["id"] not in ids
+    assert body[0]["id"] == expense_id
+    assert body[0]["type"] == "expense"
+
+    digest = "8" * 64
+    attached = await client.post(
+        f"/transactions/{expense_id}/import-hashes",
+        json={"account_id": a["id"], "import_hash": digest},
+    )
+    assert attached.status_code == 200, attached.text
+    assert attached.json()["import_hash"] == digest
+
+    reimport = await client.post(
+        "/transactions/bulk",
+        json={
+            "items": [
+                _txn(
+                    a["id"],
+                    category_id=groceries,
+                    amount="55.00",
+                    date="2026-10-05",
+                    description="csv shop different text",
+                    import_hash=digest,
+                )
+            ]
+        },
+    )
+    assert reimport.status_code == 201, reimport.text
+    assert reimport.json()["created"] == 0
+    assert reimport.json()["skipped_duplicates"] == 1
+
+
+async def test_import_link_candidates_income_without_hash(client: AsyncClient, categories):
+    a = (await client.post("/accounts", json={"name": "IncomeLink", "type": "checking", "currency": "USD"})).json()
+    salary = categories["Salary"]["id"]
+    income = await client.post(
+        "/transactions",
+        json=_txn(
+            a["id"],
+            type="income",
+            category_id=salary,
+            amount="120.00",
+            date="2026-10-12",
+            description="manual payday",
+        ),
+    )
+    assert income.status_code == 201
+    income_id = income.json()["id"]
+
+    candidates = await client.get(
+        "/transactions/import-link-candidates",
+        params={"account_id": a["id"], "amount": "120.00", "date": "2026-10-12", "type": "income"},
+    )
+    assert candidates.status_code == 200
+    assert any(row["id"] == income_id for row in candidates.json())
+
+    digest = "6" * 64
+    attached = await client.post(
+        f"/transactions/{income_id}/import-hashes",
+        json={"account_id": a["id"], "import_hash": digest},
+    )
+    assert attached.status_code == 200
+    assert any(h["import_hash"] == digest for h in attached.json()["import_hashes"])
+
+
 async def test_cashback_rates_rejected_for_cash_account(client: AsyncClient):
     cash = (await client.post("/accounts", json={"name": "Cash", "type": "cash", "currency": "USD"})).json()
     card = (await client.post("/accounts", json={"name": "Card", "type": "debit_card", "currency": "USD"})).json()

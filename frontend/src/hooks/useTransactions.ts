@@ -115,7 +115,7 @@ export function useMergeTransfer() {
 }
 
 export function useImportLinkCandidates(
-  params: { account_id: number; amount: string; date: string } | null,
+  params: { account_id: number; amount: string; date: string; type?: "expense" | "income" } | null,
 ) {
   return useQuery({
     queryKey: ["import-link-candidates", params],

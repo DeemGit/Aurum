@@ -249,37 +249,67 @@ async def list_import_link_candidates(
     account_id: int = Query(...),
     amount: Decimal = Query(..., gt=0),
     date: date_ = Query(...),
+    type: Literal["expense", "income"] | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> list[Transaction]:
-    """Existing rows (esp. transfers) that an import line can be force-linked to.
+    """Rows an import line can be force-linked to (transfers and manual expense/income).
 
     Same amount, calendar date within ±TRANSFER_MATCH_WINDOW, and the account
-    is either the primary or the transfer destination account.
+    is either the primary or the transfer destination account. Optional ``type``
+    limits candidates to that leg plus transfers (so an expense CSV row does not
+    surface unrelated incomes).
     """
     window_days = TRANSFER_MATCH_WINDOW.days
     lo = date - timedelta(days=window_days)
     hi = date + timedelta(days=window_days)
-    rows = (
-        await session.execute(
-            select(Transaction)
-            .options(*_EAGER)
-            .where(
-                Transaction.amount == amount,
-                Transaction.date >= lo,
-                Transaction.date <= hi,
-                or_(
-                    Transaction.account_id == account_id,
-                    Transaction.transfer_account_id == account_id,
-                ),
-            )
+    conditions = [
+        Transaction.amount == amount,
+        Transaction.date >= lo,
+        Transaction.date <= hi,
+        or_(
+            Transaction.account_id == account_id,
+            Transaction.transfer_account_id == account_id,
+        ),
+    ]
+    if type == "expense":
+        conditions.append(
+            Transaction.type.in_([TransactionType.EXPENSE, TransactionType.TRANSFER])
         )
+    elif type == "income":
+        conditions.append(
+            Transaction.type.in_([TransactionType.INCOME, TransactionType.TRANSFER])
+        )
+
+    rows = (
+        await session.execute(select(Transaction).options(*_EAGER).where(*conditions))
     ).scalars().all()
 
-    def _sort_key(tx: Transaction) -> tuple[int, int, int]:
-        # Prefer transfers, then closer dates, then stable id.
-        type_rank = 0 if tx.type == TransactionType.TRANSFER else 1
+    preferred_type = (
+        TransactionType.EXPENSE
+        if type == "expense"
+        else TransactionType.INCOME
+        if type == "income"
+        else None
+    )
+
+    def _has_fingerprint_for_account(tx: Transaction) -> bool:
+        for row in tx.import_hashes:
+            if row.account_id == account_id:
+                return True
+        # Legacy column is the source-leg digest after merge; only count it when
+        # this account is the primary account_id of the row.
+        return tx.account_id == account_id and tx.import_hash is not None
+
+    def _sort_key(tx: Transaction) -> tuple[int, int, int, int]:
+        # Prefer manual rows still missing a fingerprint for this account, then
+        # same type as the statement line, then closer dates, then stable id.
+        missing_hash = 0 if not _has_fingerprint_for_account(tx) else 1
+        if preferred_type is None:
+            type_rank = 0 if tx.type == TransactionType.TRANSFER else 1
+        else:
+            type_rank = 0 if tx.type == preferred_type else 1
         delta = abs((tx.date - date).days)
-        return (type_rank, delta, tx.id)
+        return (missing_hash, type_rank, delta, tx.id)
 
     ranked = sorted(rows, key=_sort_key)
     return ranked[:20]

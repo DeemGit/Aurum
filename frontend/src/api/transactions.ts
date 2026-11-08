@@ -96,12 +96,14 @@ export function fetchImportLinkCandidates(params: {
   account_id: number;
   amount: string;
   date: string;
+  type?: "expense" | "income";
 }) {
   const qs = new URLSearchParams({
     account_id: String(params.account_id),
     amount: params.amount,
     date: params.date,
   });
+  if (params.type) qs.set("type", params.type);
   return api.get<Transaction[]>(`/transactions/import-link-candidates?${qs.toString()}`);
 }
 

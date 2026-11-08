@@ -422,7 +422,8 @@ export function CsvImportPage() {
     if (linkRowIndex === null) return null;
     const row = valid[linkRowIndex];
     if (!row?.date || !row.amount || !accountId) return null;
-    return { account_id: Number(accountId), amount: row.amount, date: row.date };
+    const type = row.type === "expense" || row.type === "income" ? row.type : undefined;
+    return { account_id: Number(accountId), amount: row.amount, date: row.date, type };
   }, [linkRowIndex, valid, accountId]);
 
   const linkCandidates = useImportLinkCandidates(linkCandidateParams);
@@ -1167,26 +1168,34 @@ export function CsvImportPage() {
           )}
           {linkCandidates.data && linkCandidates.data.length > 0 && (
             <ul className="max-h-64 space-y-2 overflow-y-auto">
-              {linkCandidates.data.map((tx) => (
-                <li key={tx.id} className="flex items-start justify-between gap-2 rounded-md border border-border p-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium text-text-primary">{tx.description}</p>
-                    <p className="truncate text-xs text-text-muted">
-                      {t(`transactions.${tx.type}` as TranslationKey)} · {tx.account.name}
-                      {tx.transfer_account ? ` → ${tx.transfer_account.name}` : ""} ·{" "}
-                      {formatTransactionDate(tx.date, true)} · {formatCurrency(tx.amount, tx.account.currency)}
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={attachImportHashMutation.isPending}
-                    onClick={() => void confirmLinkToTransaction(tx.id)}
-                  >
-                    {t("transactions.import.linkConfirm")}
-                  </Button>
-                </li>
-              ))}
+              {linkCandidates.data.map((tx) => {
+                const importAccountId = Number(accountId);
+                const hasFingerprint =
+                  (tx.import_hashes ?? []).some((row) => row.account_id === importAccountId) ||
+                  (tx.account_id === importAccountId && Boolean(tx.import_hash));
+                return (
+                  <li key={tx.id} className="flex items-start justify-between gap-2 rounded-md border border-border p-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-text-primary">{tx.description}</p>
+                      <p className="truncate text-xs text-text-muted">
+                        {t(`transactions.${tx.type}` as TranslationKey)} · {tx.account.name}
+                        {tx.transfer_account ? ` → ${tx.transfer_account.name}` : ""} ·{" "}
+                        {formatTransactionDate(tx.date, true)} ·{" "}
+                        {formatCurrency(tx.amount, tx.account.currency)}
+                        {!hasFingerprint ? ` · ${t("transactions.import.linkNoHash")}` : ""}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={attachImportHashMutation.isPending}
+                      onClick={() => void confirmLinkToTransaction(tx.id)}
+                    >
+                      {t("transactions.import.linkConfirm")}
+                    </Button>
+                  </li>
+                );
+              })}
             </ul>
           )}
           {linkError && <p className="text-sm text-danger">{linkError}</p>}
