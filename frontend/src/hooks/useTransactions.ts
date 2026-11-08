@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  attachImportHash,
   bulkCreateTransactions,
   createTransaction,
   deleteTransaction,
   fetchAllTransactionsInRange,
+  fetchImportLinkCandidates,
   fetchTransferMatches,
   fetchTransactions,
   fetchTransactionYears,
@@ -108,6 +110,32 @@ export function useMergeTransfer() {
   const invalidate = useInvalidateAfterTransactionChange();
   return useMutation({
     mutationFn: mergeTransfer,
+    onSuccess: invalidate,
+  });
+}
+
+export function useImportLinkCandidates(
+  params: { account_id: number; amount: string; date: string } | null,
+) {
+  return useQuery({
+    queryKey: ["import-link-candidates", params],
+    queryFn: () => fetchImportLinkCandidates(params!),
+    enabled: params !== null,
+  });
+}
+
+export function useAttachImportHash() {
+  const invalidate = useInvalidateAfterTransactionChange();
+  return useMutation({
+    mutationFn: ({
+      transactionId,
+      account_id,
+      import_hash,
+    }: {
+      transactionId: number;
+      account_id: number;
+      import_hash: string;
+    }) => attachImportHash(transactionId, { account_id, import_hash }),
     onSuccess: invalidate,
   });
 }

@@ -3,10 +3,16 @@ import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, Upload } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { Dialog } from "@/components/ui/Dialog";
 import { Input, Label, Select } from "@/components/ui/Input";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useCategories } from "@/hooks/useCategories";
-import { useBulkCreateTransactions, useTransactionsForDuplicateCheck } from "@/hooks/useTransactions";
+import {
+  useAttachImportHash,
+  useBulkCreateTransactions,
+  useImportLinkCandidates,
+  useTransactionsForDuplicateCheck,
+} from "@/hooks/useTransactions";
 import { convertAlfaHtmlStatement, convertGpbHtmlStatement } from "@/api/transactions";
 import { translateCategoryName } from "@/lib/categoryLabels";
 import {
@@ -33,9 +39,9 @@ import {
   type AmountFormat,
   type DateFormat,
 } from "@/lib/csv";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatTransactionDate } from "@/lib/format";
 import { ApiError } from "@/api/client";
-import { useTranslation } from "@/lib/i18n";
+import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import type { TransactionInput } from "@/types";
 
 type Step = "upload" | "map" | "preview";
@@ -120,6 +126,7 @@ export function CsvImportPage() {
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
   const bulkCreate = useBulkCreateTransactions();
+  const attachImportHashMutation = useAttachImportHash();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [accountId, setAccountId] = useState("");
@@ -237,16 +244,25 @@ export function CsvImportPage() {
     dateBounds?.max ?? null
   );
 
-  // Prefer import_hash when present; fall back to date|amount|description
-  // (type omitted so expense→transfer still matches the statement row).
+  // Digests force-linked in this preview session (before duplicate-check refetch).
+  const [linkedHashKeys, setLinkedHashKeys] = useState<Set<string>>(() => new Set());
+  const [linkRowIndex, setLinkRowIndex] = useState<number | null>(null);
+  const [linkMessage, setLinkMessage] = useState<string | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
+  // Prefer import_hash / import_hashes when present; fall back to
+  // date|amount|description (type omitted so expense→transfer still matches).
   const existingKeys = useMemo(() => {
-    const keys = new Set<string>();
+    const keys = new Set<string>(linkedHashKeys);
     for (const tx of existingTransactions.data ?? []) {
       if (tx.import_hash) keys.add(`hash:${tx.import_hash}`);
+      for (const row of tx.import_hashes ?? []) {
+        keys.add(`hash:${row.import_hash}`);
+      }
       keys.add(transactionDedupeKey(tx.date, tx.amount, tx.description));
     }
     return keys;
-  }, [existingTransactions.data]);
+  }, [existingTransactions.data, linkedHashKeys]);
 
   const { candidates, skipped } = useMemo(() => {
     if (step !== "preview") return { candidates: [] as TransactionInput[], skipped: [] as SkippedRow[] };
@@ -402,6 +418,44 @@ export function CsvImportPage() {
     );
   }, [validSelectionKey, valid, isDuplicate]);
 
+  const linkCandidateParams = useMemo(() => {
+    if (linkRowIndex === null) return null;
+    const row = valid[linkRowIndex];
+    if (!row?.date || !row.amount || !accountId) return null;
+    return { account_id: Number(accountId), amount: row.amount, date: row.date };
+  }, [linkRowIndex, valid, accountId]);
+
+  const linkCandidates = useImportLinkCandidates(linkCandidateParams);
+
+  async function confirmLinkToTransaction(transactionId: number) {
+    if (linkRowIndex === null) return;
+    const row = valid[linkRowIndex];
+    if (!row?.import_hash || !accountId) return;
+    setLinkError(null);
+    setLinkMessage(null);
+    try {
+      await attachImportHashMutation.mutateAsync({
+        transactionId,
+        account_id: Number(accountId),
+        import_hash: row.import_hash,
+      });
+      setLinkedHashKeys((prev) => new Set(prev).add(`hash:${row.import_hash}`));
+      setSelectedIndexes((prev) => {
+        const next = new Set(prev);
+        next.delete(linkRowIndex);
+        return next;
+      });
+      setLinkMessage(t("transactions.import.linkSuccess"));
+      setLinkRowIndex(null);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        setLinkError(t("transactions.import.linkErrorConflict"));
+      } else {
+        setLinkError(error instanceof ApiError ? error.message : t("transactions.import.linkError"));
+      }
+    }
+  }
+
   const selectedCount = useMemo(() => {
     let count = 0;
     for (const index of selectedIndexes) {
@@ -526,6 +580,10 @@ export function CsvImportPage() {
     setAlfaHtml("");
     setHtmlToday(todayLocalIso());
     setParseError(null);
+    setLinkedHashKeys(new Set());
+    setLinkRowIndex(null);
+    setLinkMessage(null);
+    setLinkError(null);
   }
 
   function toggleSelectAll(event: ChangeEvent<HTMLInputElement>) {
@@ -962,6 +1020,10 @@ export function CsvImportPage() {
                   </p>
                 )}
 
+                {linkMessage && (
+                  <p className="rounded-lg border border-border bg-surface-2 p-3 text-xs text-success">{linkMessage}</p>
+                )}
+
                 {valid.length > 0 && (
                   <div className="max-h-[min(24rem,55vh)] overflow-auto rounded-lg border border-border">
                     <table className="w-full text-left text-sm">
@@ -979,8 +1041,9 @@ export function CsvImportPage() {
                           </th>
                           <th className="px-3 py-2 font-medium">{t("transactions.form.dateLabel")}</th>
                           <th className="px-3 py-2 font-medium">{t("transactions.form.descriptionLabel")}</th>
-                          <th className="px-3 py-2 font-medium">{t("transactions.form.categoryLabel")}</th>
+                          <th className="hidden px-3 py-2 font-medium sm:table-cell">{t("transactions.form.categoryLabel")}</th>
                           <th className="px-3 py-2 text-right font-medium">{t("transactions.form.amountLabel")}</th>
+                          <th className="px-2 py-2 font-medium" />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gridline">
@@ -996,8 +1059,21 @@ export function CsvImportPage() {
                               />
                             </td>
                             <td className="whitespace-nowrap px-3 py-1.5 text-text-secondary">{item.date}</td>
-                            <td className="px-3 py-1.5 text-text-primary">{item.description}</td>
-                            <td className="whitespace-nowrap px-3 py-1.5 text-text-secondary">
+                            <td className="px-3 py-1.5 text-text-primary">
+                              <span className="block">{item.description}</span>
+                              <button
+                                type="button"
+                                className="mt-0.5 text-xs text-text-muted underline-offset-2 hover:underline sm:hidden"
+                                disabled={!item.import_hash || attachImportHashMutation.isPending}
+                                onClick={() => {
+                                  setLinkError(null);
+                                  setLinkRowIndex(index);
+                                }}
+                              >
+                                {t("transactions.import.linkButton")}
+                              </button>
+                            </td>
+                            <td className="hidden whitespace-nowrap px-3 py-1.5 text-text-secondary sm:table-cell">
                               {categories?.find((c) => c.id === item.category_id)
                                 ? translateCategoryName(categories.find((c) => c.id === item.category_id)!.name)
                                 : "—"}
@@ -1009,6 +1085,20 @@ export function CsvImportPage() {
                             >
                               {item.type === "expense" ? "-" : "+"}
                               {formatCurrency(item.amount)}
+                            </td>
+                            <td className="hidden whitespace-nowrap px-2 py-1.5 text-right sm:table-cell">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="h-auto px-2 py-1 text-xs"
+                                disabled={!item.import_hash || attachImportHashMutation.isPending}
+                                onClick={() => {
+                                  setLinkError(null);
+                                  setLinkRowIndex(index);
+                                }}
+                              >
+                                {t("transactions.import.linkButton")}
+                              </Button>
                             </td>
                           </tr>
                         ))}
@@ -1048,6 +1138,60 @@ export function CsvImportPage() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog
+        open={linkRowIndex !== null}
+        onClose={() => {
+          if (attachImportHashMutation.isPending) return;
+          setLinkRowIndex(null);
+          setLinkError(null);
+        }}
+        title={t("transactions.import.linkTitle")}
+      >
+        <div className="space-y-3 text-sm">
+          <p className="text-xs text-text-muted">{t("transactions.import.linkHint")}</p>
+          {linkRowIndex !== null && valid[linkRowIndex] && (
+            <p className="rounded-md border border-border bg-surface-2 p-2 text-xs text-text-secondary">
+              {valid[linkRowIndex]!.date} · {valid[linkRowIndex]!.description} ·{" "}
+              {formatCurrency(valid[linkRowIndex]!.amount)}
+            </p>
+          )}
+          {linkCandidates.isFetching && (
+            <p className="text-xs text-text-muted">{t("transactions.import.linkLoading")}</p>
+          )}
+          {linkCandidates.isError && (
+            <p className="text-sm text-danger">{t("transactions.import.linkFailed")}</p>
+          )}
+          {linkCandidates.isSuccess && linkCandidates.data.length === 0 && (
+            <p className="text-xs text-text-muted">{t("transactions.import.linkEmpty")}</p>
+          )}
+          {linkCandidates.data && linkCandidates.data.length > 0 && (
+            <ul className="max-h-64 space-y-2 overflow-y-auto">
+              {linkCandidates.data.map((tx) => (
+                <li key={tx.id} className="flex items-start justify-between gap-2 rounded-md border border-border p-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-text-primary">{tx.description}</p>
+                    <p className="truncate text-xs text-text-muted">
+                      {t(`transactions.${tx.type}` as TranslationKey)} · {tx.account.name}
+                      {tx.transfer_account ? ` → ${tx.transfer_account.name}` : ""} ·{" "}
+                      {formatTransactionDate(tx.date, true)} · {formatCurrency(tx.amount, tx.account.currency)}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={attachImportHashMutation.isPending}
+                    onClick={() => void confirmLinkToTransaction(tx.id)}
+                  >
+                    {t("transactions.import.linkConfirm")}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {linkError && <p className="text-sm text-danger">{linkError}</p>}
+        </div>
+      </Dialog>
     </div>
   );
 }

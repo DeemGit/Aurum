@@ -91,6 +91,28 @@ export function mergeTransfer(payload: {
   return api.post<Transaction>("/transactions/merge-transfer", payload);
 }
 
+/** Existing txs (esp. transfers) an import row can be force-linked to. */
+export function fetchImportLinkCandidates(params: {
+  account_id: number;
+  amount: string;
+  date: string;
+}) {
+  const qs = new URLSearchParams({
+    account_id: String(params.account_id),
+    amount: params.amount,
+    date: params.date,
+  });
+  return api.get<Transaction[]>(`/transactions/import-link-candidates?${qs.toString()}`);
+}
+
+/** Attach a statement fingerprint to an existing transaction (no new row). */
+export function attachImportHash(
+  transactionId: number,
+  payload: { account_id: number; import_hash: string },
+) {
+  return api.post<Transaction>(`/transactions/${transactionId}/import-hashes`, payload);
+}
+
 export function updateTransaction(id: number, input: Partial<TransactionInput>) {
   return api.patch<Transaction>(`/transactions/${id}`, input);
 }

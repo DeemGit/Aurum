@@ -93,6 +93,11 @@ export interface CashbackCategory {
   color: string | null;
 }
 
+export interface ImportHash {
+  account_id: number;
+  import_hash: string;
+}
+
 export interface Transaction {
   id: number;
   account_id: number;
@@ -110,6 +115,7 @@ export interface Transaction {
   date: string;
   occurred_at: string;
   import_hash: string | null;
+  import_hashes?: ImportHash[];
   cashback_category_id: number | null;
   cashback_amount: string | null;
   is_cashback: boolean;
