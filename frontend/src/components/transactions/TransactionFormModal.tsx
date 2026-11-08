@@ -8,18 +8,21 @@ import { TagInput } from "@/components/transactions/TagInput";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useCategories } from "@/hooks/useCategories";
 import {
+  useAttachImportHash,
   useCreateTransaction,
   useMergeTransfer,
   useTransferMatches,
   useUpdateTransaction,
 } from "@/hooks/useTransactions";
 import { fetchAccountCashbackRates, fetchCashbackCategories } from "@/api/cashback";
+import { ApiError } from "@/api/client";
+import { BANK_PRESETS } from "@/lib/bankPresets";
 import { computeCashbackAmount } from "@/lib/cashback";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { buildHierarchicalCategories, translateCategoryName } from "@/lib/categoryLabels";
-import { toOccurredAtIso } from "@/lib/csv";
+import { computeImportHash, toOccurredAtIso } from "@/lib/csv";
 import { formatCurrency, formatDeltaSeconds, formatOccurredAt, formatTransactionDate } from "@/lib/format";
-import type { Tag, Transaction, TransactionInput, TransactionSplitInput, TransactionType } from "@/types";
+import type { ImportHash, Tag, Transaction, TransactionInput, TransactionSplitInput, TransactionType } from "@/types";
 
 type MergeCandidate = { transaction: Transaction; delta_seconds: number };
 
@@ -121,6 +124,7 @@ export function TransactionFormModal({
   const createTransaction = useCreateTransaction();
   const updateTransaction = useUpdateTransaction();
   const mergeTransferMutation = useMergeTransfer();
+  const attachImportHashMutation = useAttachImportHash();
   const transferMatches = useTransferMatches(
     open && transaction && (transaction.type === "expense" || transaction.type === "income")
       ? transaction.id
@@ -134,6 +138,17 @@ export function TransactionFormModal({
   const [error, setError] = useState<string | null>(null);
   const [previewCandidate, setPreviewCandidate] = useState<MergeCandidate | null>(null);
   const [cashbackAmountTouched, setCashbackAmountTouched] = useState(false);
+  const [importHashes, setImportHashes] = useState<ImportHash[]>([]);
+  const [showHashForm, setShowHashForm] = useState(false);
+  const [hashAccountId, setHashAccountId] = useState("");
+  const [hashDate, setHashDate] = useState(todayIso());
+  const [hashTime, setHashTime] = useState("00:00");
+  const [hashAmount, setHashAmount] = useState("");
+  const [hashDescription, setHashDescription] = useState("");
+  const [hashMerchant, setHashMerchant] = useState("");
+  const [hashPresetId, setHashPresetId] = useState("");
+  const [hashError, setHashError] = useState<string | null>(null);
+  const [hashSuccess, setHashSuccess] = useState<string | null>(null);
 
   const cashbackCategoriesQuery = useQuery({
     queryKey: ["cashback-categories", form.account_id],
@@ -157,9 +172,18 @@ export function TransactionFormModal({
     if (!open) {
       setPreviewCandidate(null);
       setCashbackAmountTouched(false);
+      setShowHashForm(false);
+      setHashError(null);
+      setHashSuccess(null);
       return;
     }
     if (transaction) {
+      setImportHashes(transaction.import_hashes ?? []);
+      setHashAccountId(String(transaction.account_id));
+      setHashDate(transaction.date);
+      setHashAmount(transaction.amount);
+      setHashDescription(transaction.description);
+      setHashMerchant(transaction.merchant ?? "");
       const hasSplits = transaction.splits.length > 0;
       // A split's categories always share one parent (see
       // routes/transactions.py's _build_splits) — derive that shared base
@@ -799,6 +823,183 @@ export function TransactionFormModal({
           <Label htmlFor="transaction-tags">{t("transactions.form.tagsLabel")}</Label>
           <TagInput value={tags} onChange={setTags} />
         </div>
+
+        {transaction && form.type === "transfer" && (
+          <div className="space-y-2 rounded-md border border-border p-3">
+            <p className="text-xs font-medium text-text-secondary">{t("transactions.form.importHashesTitle")}</p>
+            <p className="text-xs text-text-muted">{t("transactions.form.importHashesHint")}</p>
+            {importHashes.length === 0 ? (
+              <p className="text-xs text-text-muted">{t("transactions.form.importHashesEmpty")}</p>
+            ) : (
+              <ul className="space-y-1 text-xs text-text-secondary">
+                {importHashes.map((row) => {
+                  const accountName =
+                    accounts?.find((account) => account.id === row.account_id)?.name ??
+                    String(row.account_id);
+                  return (
+                    <li key={`${row.account_id}:${row.import_hash}`} className="truncate font-mono">
+                      {t("transactions.form.importHashShort", {
+                        account: accountName,
+                        hash: row.import_hash.slice(0, 12),
+                      })}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {!showHashForm ? (
+              <Button type="button" variant="secondary" onClick={() => setShowHashForm(true)}>
+                {t("transactions.form.importHashesAdd")}
+              </Button>
+            ) : (
+              <div className="space-y-2 border-t border-border pt-2">
+                <div>
+                  <Label htmlFor="hash_account">{t("transactions.form.importHashesAccount")}</Label>
+                  <Select
+                    id="hash_account"
+                    value={hashAccountId}
+                    onChange={(event) => setHashAccountId(event.target.value)}
+                  >
+                    <option value={String(transaction.account_id)}>
+                      {transaction.account.name}
+                    </option>
+                    {transaction.transfer_account && (
+                      <option value={String(transaction.transfer_account.id)}>
+                        {transaction.transfer_account.name}
+                      </option>
+                    )}
+                  </Select>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div>
+                    <Label htmlFor="hash_date">{t("transactions.form.dateLabel")}</Label>
+                    <Input
+                      id="hash_date"
+                      type="date"
+                      value={hashDate}
+                      onChange={(event) => setHashDate(event.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="hash_time">{t("transactions.form.timeLabel")}</Label>
+                    <Input
+                      id="hash_time"
+                      type="time"
+                      value={hashTime}
+                      onChange={(event) => setHashTime(event.target.value)}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="hash_amount">{t("transactions.form.amountLabel")}</Label>
+                  <Input
+                    id="hash_amount"
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    value={hashAmount}
+                    onChange={(event) => setHashAmount(event.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="hash_description">{t("transactions.form.descriptionLabel")}</Label>
+                  <Input
+                    id="hash_description"
+                    value={hashDescription}
+                    onChange={(event) => setHashDescription(event.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="hash_merchant">{t("transactions.form.merchantLabel")}</Label>
+                  <Input
+                    id="hash_merchant"
+                    value={hashMerchant}
+                    onChange={(event) => setHashMerchant(event.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="hash_preset">{t("transactions.form.importHashesPreset")}</Label>
+                  <Select
+                    id="hash_preset"
+                    value={hashPresetId}
+                    onChange={(event) => setHashPresetId(event.target.value)}
+                  >
+                    <option value="">{t("transactions.form.importHashesPresetNone")}</option>
+                    {BANK_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                {hashError && <p className="text-sm text-danger">{hashError}</p>}
+                {hashSuccess && <p className="text-sm text-success">{hashSuccess}</p>}
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setShowHashForm(false);
+                      setHashError(null);
+                    }}
+                  >
+                    {t("common.cancel")}
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={
+                      attachImportHashMutation.isPending ||
+                      !hashAccountId ||
+                      !hashDate ||
+                      !hashAmount ||
+                      !hashDescription.trim()
+                    }
+                    onClick={() => {
+                      void (async () => {
+                        setHashError(null);
+                        setHashSuccess(null);
+                        try {
+                          const occurredAt = toOccurredAtIso(hashDate, hashTime || "00:00");
+                          const digest = await computeImportHash({
+                            accountId: Number(hashAccountId),
+                            date: hashDate,
+                            occurredAt,
+                            amount: Number(hashAmount).toFixed(2),
+                            description: hashDescription.trim(),
+                            merchant: hashMerchant.trim() || undefined,
+                            presetId: hashPresetId || undefined,
+                          });
+                          const updated = await attachImportHashMutation.mutateAsync({
+                            transactionId: transaction.id,
+                            account_id: Number(hashAccountId),
+                            import_hash: digest,
+                          });
+                          setImportHashes(updated.import_hashes ?? []);
+                          setHashSuccess(t("transactions.form.importHashesSuccess"));
+                          setShowHashForm(false);
+                        } catch (err) {
+                          if (err instanceof ApiError && err.status === 409) {
+                            setHashError(t("transactions.form.importHashesErrorConflict"));
+                          } else {
+                            setHashError(
+                              err instanceof ApiError
+                                ? err.message
+                                : t("transactions.form.importHashesError"),
+                            );
+                          }
+                        }
+                      })();
+                    }}
+                  >
+                    {attachImportHashMutation.isPending
+                      ? t("common.saving")
+                      : t("transactions.form.importHashesSubmit")}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {transferMatches.data && transferMatches.data.candidates.length > 0 && (
           <div className="space-y-2 rounded-md border border-border p-3">
