@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Plus, X } from "lucide-react";
+import { Copy, Plus, X } from "lucide-react";
 import { Dialog } from "@/components/ui/Dialog";
 import { Button } from "@/components/ui/Button";
 import { Input, Label, Select } from "@/components/ui/Input";
@@ -125,8 +125,12 @@ export function TransactionFormModal({
   const updateTransaction = useUpdateTransaction();
   const mergeTransferMutation = useMergeTransfer();
   const attachImportHashMutation = useAttachImportHash();
+  const [createAsCopy, setCreateAsCopy] = useState(false);
   const transferMatches = useTransferMatches(
-    open && transaction && (transaction.type === "expense" || transaction.type === "income")
+    open &&
+      !createAsCopy &&
+      transaction &&
+      (transaction.type === "expense" || transaction.type === "income")
       ? transaction.id
       : null
   );
@@ -175,6 +179,12 @@ export function TransactionFormModal({
       setShowHashForm(false);
       setHashError(null);
       setHashSuccess(null);
+      setCreateAsCopy(false);
+      return;
+    }
+    // Copy-as-new already wrote the form from current inputs — don't wipe it.
+    if (createAsCopy) {
+      setError(null);
       return;
     }
     if (transaction) {
@@ -255,7 +265,34 @@ export function TransactionFormModal({
       setCashbackAmountTouched(false);
     }
     setError(null);
-  }, [open, transaction, accounts, defaultAccountId]);
+  }, [open, transaction, accounts, defaultAccountId, createAsCopy]);
+
+  function handleCopyAsNew() {
+    if (!transaction || form.type === "transfer") return;
+    setForm((prev) => ({
+      ...prev,
+      amount: "",
+      cashback_amount: "",
+      transfer_amount: "",
+      exchange_rate: "",
+      fee_amount: "0",
+    }));
+    setSplitRows((prev) =>
+      prev.map((row) => ({
+        ...row,
+        key: generateRowKey(),
+        amount: "",
+      })),
+    );
+    setCashbackAmountTouched(false);
+    setPreviewCandidate(null);
+    setShowHashForm(false);
+    setImportHashes([]);
+    setHashError(null);
+    setHashSuccess(null);
+    setError(null);
+    setCreateAsCopy(true);
+  }
 
   useEffect(() => {
     if (!open || !form.cashback_category_id || !cashbackCategoriesQuery.data) return;
@@ -405,7 +442,7 @@ export function TransactionFormModal({
         amount: row.amount,
         note: row.note || null,
       }));
-    } else if (transaction && transaction.splits.length > 0) {
+    } else if (!createAsCopy && transaction && transaction.splits.length > 0) {
       splits = [];
     }
 
@@ -444,8 +481,9 @@ export function TransactionFormModal({
       splits,
     };
 
+    const isCreating = createAsCopy || !transaction;
     try {
-      if (transaction) {
+      if (!isCreating && transaction) {
         await updateTransaction.mutateAsync({ id: transaction.id, input: payload });
       } else {
         await createTransaction.mutateAsync(payload);
@@ -457,6 +495,9 @@ export function TransactionFormModal({
     }
   }
 
+  const showCopyButton =
+    Boolean(transaction) && !createAsCopy && form.type !== "transfer";
+
   return (
     <>
     <Dialog
@@ -464,7 +505,7 @@ export function TransactionFormModal({
       onClose={onClose}
       closeOnOverlayClick={false}
       title={
-        transaction
+        transaction && !createAsCopy
           ? t("transactions.form.editTitle", { id: transaction.id })
           : t("transactions.form.newTitle")
       }
@@ -825,7 +866,7 @@ export function TransactionFormModal({
           <TagInput value={tags} onChange={setTags} />
         </div>
 
-        {transaction && form.type === "transfer" && (
+        {transaction && !createAsCopy && form.type === "transfer" && (
           <div className="space-y-2 rounded-md border border-border p-3">
             <p className="text-xs font-medium text-text-secondary">{t("transactions.form.importHashesTitle")}</p>
             <p className="text-xs text-text-muted">{t("transactions.form.importHashesHint")}</p>
@@ -1033,13 +1074,29 @@ export function TransactionFormModal({
 
         {error && <p className="text-sm text-danger">{error}</p>}
 
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button type="submit" disabled={isSaving}>
-            {isSaving ? t("common.saving") : t("common.save")}
-          </Button>
+        <div className="flex items-center justify-between gap-2 pt-2">
+          <div>
+            {showCopyButton && (
+              <Button
+                type="button"
+                variant="ghost"
+                className="px-2"
+                onClick={handleCopyAsNew}
+                aria-label={t("transactions.form.copyAsNew")}
+                title={t("transactions.form.copyAsNew")}
+              >
+                <Copy size={18} />
+              </Button>
+            )}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" disabled={isSaving}>
+              {isSaving ? t("common.saving") : t("common.save")}
+            </Button>
+          </div>
         </div>
       </form>
     </Dialog>
