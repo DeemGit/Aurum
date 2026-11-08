@@ -316,6 +316,8 @@ async def test_merge_transfer_keeps_both_import_hashes(client: AsyncClient, cate
     assert body["type"] == "transfer"
     assert body["import_hash"] == hash_a
     assert body["transfer_account"]["id"] == b["id"]
+    digests = {(row["account_id"], row["import_hash"]) for row in body["import_hashes"]}
+    assert digests == {(a["id"], hash_a), (b["id"], hash_b)}
 
     reimport = await client.post(
         "/transactions/bulk",
@@ -344,6 +346,150 @@ async def test_merge_transfer_keeps_both_import_hashes(client: AsyncClient, cate
     assert reimport.status_code == 201, reimport.text
     assert reimport.json()["created"] == 0
     assert reimport.json()["skipped_duplicates"] == 2
+
+
+async def test_attach_import_hash_to_transfer(client: AsyncClient, categories):
+    a = (await client.post("/accounts", json={"name": "SrcAttach", "type": "checking", "currency": "USD"})).json()
+    b = (await client.post("/accounts", json={"name": "DstAttach", "type": "checking", "currency": "USD"})).json()
+    transfer = await client.post(
+        "/transactions",
+        json={
+            "account_id": a["id"],
+            "transfer_account_id": b["id"],
+            "type": "transfer",
+            "amount": "75.00",
+            "description": "manual transfer",
+            "date": "2026-08-01",
+        },
+    )
+    assert transfer.status_code == 201, transfer.text
+    tx_id = transfer.json()["id"]
+    digest_src = "c" * 64
+    digest_dst = "d" * 64
+
+    attached = await client.post(
+        f"/transactions/{tx_id}/import-hashes",
+        json={"account_id": a["id"], "import_hash": digest_src},
+    )
+    assert attached.status_code == 200, attached.text
+    assert attached.json()["import_hash"] == digest_src
+    assert any(h["import_hash"] == digest_src for h in attached.json()["import_hashes"])
+
+    attached_dst = await client.post(
+        f"/transactions/{tx_id}/import-hashes",
+        json={"account_id": b["id"], "import_hash": digest_dst},
+    )
+    assert attached_dst.status_code == 200, attached_dst.text
+    digests = {h["import_hash"] for h in attached_dst.json()["import_hashes"]}
+    assert digests == {digest_src, digest_dst}
+
+    # Idempotent re-attach.
+    again = await client.post(
+        f"/transactions/{tx_id}/import-hashes",
+        json={"account_id": a["id"], "import_hash": digest_src},
+    )
+    assert again.status_code == 200
+
+    # Wrong account for this transfer.
+    bad_account = await client.post(
+        "/accounts", json={"name": "OtherAttach", "type": "checking", "currency": "USD"}
+    )
+    wrong = await client.post(
+        f"/transactions/{tx_id}/import-hashes",
+        json={"account_id": bad_account.json()["id"], "import_hash": "e" * 64},
+    )
+    assert wrong.status_code == 400
+
+    # Same digest already owned by another transaction on the account.
+    other = await client.post(
+        "/transactions",
+        json=_txn(
+            a["id"],
+            category_id=categories["Groceries"]["id"],
+            amount="1.00",
+            date="2026-08-02",
+            description="other row",
+            import_hash="f" * 64,
+        ),
+    )
+    assert other.status_code == 201
+    conflict = await client.post(
+        f"/transactions/{tx_id}/import-hashes",
+        json={"account_id": a["id"], "import_hash": "f" * 64},
+    )
+    assert conflict.status_code == 409
+
+
+async def test_import_link_candidates_and_bulk_dest_soft_match(client: AsyncClient, categories):
+    a = (await client.post("/accounts", json={"name": "SrcCand", "type": "checking", "currency": "USD"})).json()
+    b = (await client.post("/accounts", json={"name": "DstCand", "type": "checking", "currency": "USD"})).json()
+    groceries = categories["Groceries"]["id"]
+    salary = categories["Salary"]["id"]
+
+    expense = await client.post(
+        "/transactions",
+        json=_txn(
+            a["id"],
+            category_id=groceries,
+            amount="33.00",
+            date="2026-09-10",
+            description="same desc both sides",
+        ),
+    )
+    income = await client.post(
+        "/transactions",
+        json=_txn(
+            b["id"],
+            type="income",
+            category_id=salary,
+            amount="33.00",
+            date="2026-09-10",
+            description="same desc both sides",
+        ),
+    )
+    merged = await client.post(
+        "/transactions/merge-transfer",
+        json={
+            "source_transaction_id": expense.json()["id"],
+            "destination_transaction_id": income.json()["id"],
+        },
+    )
+    assert merged.status_code == 201, merged.text
+    transfer_id = merged.json()["id"]
+
+    candidates = await client.get(
+        "/transactions/import-link-candidates",
+        params={"account_id": b["id"], "amount": "33.00", "date": "2026-09-10"},
+    )
+    assert candidates.status_code == 200, candidates.text
+    ids = [row["id"] for row in candidates.json()]
+    assert transfer_id in ids
+    assert candidates.json()[0]["type"] == "transfer"
+
+    digest = "9" * 64
+    bulk = await client.post(
+        "/transactions/bulk",
+        json={
+            "items": [
+                _txn(
+                    b["id"],
+                    type="income",
+                    category_id=salary,
+                    amount="33.00",
+                    date="2026-09-10",
+                    description="Same Desc Both Sides",
+                    import_hash=digest,
+                )
+            ]
+        },
+    )
+    assert bulk.status_code == 201, bulk.text
+    assert bulk.json()["created"] == 0
+    assert bulk.json()["hashes_backfilled"] == 1
+
+    refreshed = await client.get(f"/transactions", params={"account_id": b["id"], "page_size": 50})
+    transfer_row = next(item for item in refreshed.json()["items"] if item["id"] == transfer_id)
+    assert any(h["import_hash"] == digest and h["account_id"] == b["id"] for h in transfer_row["import_hashes"])
 
 
 async def test_cashback_rates_rejected_for_cash_account(client: AsyncClient):

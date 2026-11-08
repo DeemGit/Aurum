@@ -1,4 +1,5 @@
 from datetime import date as date_
+from datetime import timedelta
 from decimal import Decimal
 from typing import Literal
 
@@ -19,6 +20,7 @@ from app.schemas.transaction import (
     AlfaHtmlConvertResult,
     GpbHtmlConvertRequest,
     GpbHtmlConvertResult,
+    ImportHashAttach,
     TransactionBulkCreate,
     TransactionBulkCreateResult,
     TransactionCreate,
@@ -42,6 +44,7 @@ from app.services.cashback_service import (
     resolve_expense_cashback_amount,
 )
 from app.services.transaction_domain import (
+    TRANSFER_MATCH_WINDOW,
     attach_import_hash,
     backfill_import_hash,
     ensure_refund_target,
@@ -58,6 +61,7 @@ _EAGER = (
     selectinload(Transaction.tags),
     selectinload(Transaction.cashback_category).selectinload(CashbackCategory.account),
     selectinload(Transaction.splits).selectinload(TransactionSplit.category),
+    selectinload(Transaction.import_hashes),
 )
 
 
@@ -240,6 +244,47 @@ async def list_transaction_years(session: AsyncSession = Depends(get_session)) -
     return list(range(min_date.year, max(max_date.year, current_year) + 1))
 
 
+@router.get("/import-link-candidates", response_model=list[TransactionRead])
+async def list_import_link_candidates(
+    account_id: int = Query(...),
+    amount: Decimal = Query(..., gt=0),
+    date: date_ = Query(...),
+    session: AsyncSession = Depends(get_session),
+) -> list[Transaction]:
+    """Existing rows (esp. transfers) that an import line can be force-linked to.
+
+    Same amount, calendar date within ±TRANSFER_MATCH_WINDOW, and the account
+    is either the primary or the transfer destination account.
+    """
+    window_days = TRANSFER_MATCH_WINDOW.days
+    lo = date - timedelta(days=window_days)
+    hi = date + timedelta(days=window_days)
+    rows = (
+        await session.execute(
+            select(Transaction)
+            .options(*_EAGER)
+            .where(
+                Transaction.amount == amount,
+                Transaction.date >= lo,
+                Transaction.date <= hi,
+                or_(
+                    Transaction.account_id == account_id,
+                    Transaction.transfer_account_id == account_id,
+                ),
+            )
+        )
+    ).scalars().all()
+
+    def _sort_key(tx: Transaction) -> tuple[int, int, int]:
+        # Prefer transfers, then closer dates, then stable id.
+        type_rank = 0 if tx.type == TransactionType.TRANSFER else 1
+        delta = abs((tx.date - date).days)
+        return (type_rank, delta, tx.id)
+
+    ranked = sorted(rows, key=_sort_key)
+    return ranked[:20]
+
+
 @router.get("/{transaction_id}/transfer-matches", response_model=TransferMatchResponse)
 async def list_transfer_matches(
     transaction_id: int, session: AsyncSession = Depends(get_session)
@@ -252,6 +297,52 @@ async def list_transfer_matches(
             for candidate, delta in ranked
         ]
     )
+
+
+@router.post("/{transaction_id}/import-hashes", response_model=TransactionRead)
+async def attach_transaction_import_hash(
+    transaction_id: int,
+    payload: ImportHashAttach,
+    session: AsyncSession = Depends(get_session),
+) -> Transaction:
+    """Force-link a statement fingerprint to an existing transaction.
+
+    Used when CSV soft-match misses (different description/time, or destination
+    leg of a transfer). Idempotent when the digest is already on this row.
+    """
+    transaction = await _load_transaction(session, transaction_id)
+    allowed_accounts = {transaction.account_id}
+    if (
+        transaction.type == TransactionType.TRANSFER
+        and transaction.transfer_account_id is not None
+    ):
+        allowed_accounts.add(transaction.transfer_account_id)
+    if payload.account_id not in allowed_accounts:
+        raise HTTPException(
+            status_code=400,
+            detail="account_id must be the transaction account or its transfer counterpart",
+        )
+
+    # Conflict if this digest already belongs to a different transaction.
+    owner = (
+        await session.execute(
+            select(TransactionImportHash).where(
+                TransactionImportHash.account_id == payload.account_id,
+                TransactionImportHash.import_hash == payload.import_hash,
+            )
+        )
+    ).scalar_one_or_none()
+    if owner is not None and owner.transaction_id != transaction_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Duplicate import_hash for this account",
+        )
+
+    # Ensure relationship is loaded for backfill_import_hash.
+    _ = transaction.import_hashes
+    backfill_import_hash(transaction, payload.account_id, payload.import_hash)
+    await session.commit()
+    return await _load_transaction(session, transaction_id)
 
 
 @router.post("/merge-transfer", response_model=TransactionRead, status_code=201)
@@ -396,13 +487,17 @@ async def bulk_create_transactions(
             seen_in_batch.add(key)
 
             # Older rows (incl. expense→transfer) may lack this fingerprint —
-            # attach it instead of inserting a second expense.
+            # attach it instead of inserting a second expense. Also match the
+            # destination leg via transfer_account_id after merge-transfer.
             match = (
                 await session.execute(
                     select(Transaction)
                     .options(selectinload(Transaction.import_hashes))
                     .where(
-                        Transaction.account_id == item.account_id,
+                        or_(
+                            Transaction.account_id == item.account_id,
+                            Transaction.transfer_account_id == item.account_id,
+                        ),
                         Transaction.date == item.date,
                         Transaction.amount == item.amount,
                         func.lower(func.trim(Transaction.description)) == item.description.strip().lower(),

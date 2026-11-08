@@ -366,6 +366,15 @@ class TransactionSplitRead(BaseModel):
     note: str | None
 
 
+class ImportHashRead(BaseModel):
+    """One statement fingerprint attached to a transaction (per account)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    account_id: int
+    import_hash: str
+
+
 class TransactionRead(TransactionFields):
     model_config = ConfigDict(from_attributes=True)
 
@@ -377,6 +386,23 @@ class TransactionRead(TransactionFields):
     cashback_category: CashbackCategoryRead | None = None
     tags: list[TagRead] = Field(default_factory=list)
     splits: list[TransactionSplitRead] = Field(default_factory=list)
+    # Both legs after merge-transfer; CSV preview uses these for hash dedupe.
+    import_hashes: list[ImportHashRead] = Field(default_factory=list)
+
+
+class ImportHashAttach(BaseModel):
+    """Force-link a statement fingerprint to an existing transaction."""
+
+    account_id: int
+    import_hash: str = Field(min_length=64, max_length=64)
+
+    @field_validator("import_hash")
+    @classmethod
+    def _normalize_import_hash(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if len(normalized) != 64 or any(c not in "0123456789abcdef" for c in normalized):
+            raise ValueError("import_hash must be a 64-character lowercase hex SHA-256 digest")
+        return normalized
 
 
 class TransactionPage(BaseModel):
