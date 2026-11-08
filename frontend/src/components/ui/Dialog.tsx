@@ -8,9 +8,11 @@ interface DialogProps extends PropsWithChildren {
   open: boolean;
   onClose: () => void;
   title: ReactNode;
+  /** When false, clicking the dimmed backdrop does not dismiss (forms). Default true. */
+  closeOnOverlayClick?: boolean;
 }
 
-export function Dialog({ open, onClose, title, children }: DialogProps) {
+export function Dialog({ open, onClose, title, children, closeOnOverlayClick = true }: DialogProps) {
   const { t } = useTranslation();
 
   useEffect(() => {
@@ -29,7 +31,7 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
       className={cn(
         "fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
       )}
-      onClick={onClose}
+      onClick={closeOnOverlayClick ? onClose : undefined}
     >
       <div
         className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl border border-border bg-surface-1 p-5 shadow-xl sm:max-w-md sm:rounded-2xl"

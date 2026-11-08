@@ -462,6 +462,7 @@ export function TransactionFormModal({
     <Dialog
       open={open}
       onClose={onClose}
+      closeOnOverlayClick={false}
       title={
         transaction
           ? t("transactions.form.editTitle", { id: transaction.id })
