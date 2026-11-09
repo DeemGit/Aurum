@@ -98,6 +98,10 @@ const ru = {
   "dashboard.recentTransactionsTitle": "Последние транзакции",
   "dashboard.allTransactionsLink": "Все транзакции",
   "dashboard.noTransactionsYet": "Транзакций пока нет.",
+  "dashboard.categoryTransactionsTitle": "Транзакции: {{name}}",
+  "dashboard.categoryTransactionsEmpty": "За этот месяц в категории нет расходов.",
+  "dashboard.categoryTransactionsClear": "Сбросить",
+  "dashboard.categoryTransactionsSelectHint": "Нажмите категорию, чтобы показать её транзакции",
 
   "netWorth.periodSuffix": "за период",
   "netWorth.noChartData": "Пока нет данных для графика.",
@@ -719,6 +723,10 @@ const en: Record<keyof typeof ru, string> = {
   "dashboard.recentTransactionsTitle": "Recent transactions",
   "dashboard.allTransactionsLink": "All transactions",
   "dashboard.noTransactionsYet": "No transactions yet.",
+  "dashboard.categoryTransactionsTitle": "Transactions: {{name}}",
+  "dashboard.categoryTransactionsEmpty": "No expenses in this category for the month.",
+  "dashboard.categoryTransactionsClear": "Clear",
+  "dashboard.categoryTransactionsSelectHint": "Click a category to show its transactions",
 
   "netWorth.periodSuffix": "over period",
   "netWorth.noChartData": "No data for the chart yet.",

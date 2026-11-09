@@ -46,7 +46,7 @@ export function TransactionsPage() {
   const [month, setMonth] = useState(() => parseMonthParam(searchParams.get("month"), now.getMonth() + 1));
   const [accountId, setAccountId] = useState(() => searchParams.get("account_id") ?? "");
   const [type, setType] = useState<TransactionType | "">("");
-  const [categoryId, setCategoryId] = useState<string>("");
+  const [categoryId, setCategoryId] = useState(() => searchParams.get("category_id") ?? "");
   const [tagId, setTagId] = useState<string>("");
   const [sort, setSort] = useState<TransactionSort>("date_desc");
   const [page, setPage] = useState(1);

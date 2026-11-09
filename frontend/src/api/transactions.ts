@@ -10,6 +10,8 @@ export interface TransactionFilters {
   end_date?: string;
   account_id?: number;
   category_id?: number;
+  /** When true with category_id, also match direct subcategories (dashboard drill-down). */
+  include_children?: boolean;
   tag_id?: number;
   type?: string;
   search?: string;

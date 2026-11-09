@@ -148,6 +148,7 @@ async def list_transactions(
     end_date: date_ | None = Query(default=None),
     account_id: int | None = None,
     category_id: int | None = None,
+    include_children: bool = Query(default=False),
     tag_id: int | None = None,
     type: TransactionType | None = None,
     search: str | None = Query(default=None, min_length=1, max_length=255),
@@ -184,8 +185,17 @@ async def list_transactions(
         # category lives on its split lines instead, so filtering by exact
         # column match alone would silently drop it from a category filter
         # it genuinely belongs to.
+        category_ids = {category_id}
+        if include_children:
+            # Dashboard top-level rollup includes direct subcategories — same
+            # scope when drilling into that slice's transactions.
+            child_ids = (
+                await session.execute(select(Category.id).where(Category.parent_id == category_id))
+            ).scalars().all()
+            category_ids.update(child_ids)
         category_filter = or_(
-            Transaction.category_id == category_id, Transaction.splits.any(TransactionSplit.category_id == category_id)
+            Transaction.category_id.in_(category_ids),
+            Transaction.splits.any(TransactionSplit.category_id.in_(category_ids)),
         )
         stmt = stmt.where(category_filter)
         count_stmt = count_stmt.where(category_filter)

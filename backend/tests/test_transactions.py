@@ -451,6 +451,37 @@ async def _subcategory(client: AsyncClient, parent_id: int, name: str) -> int:
     return resp.json()["id"]
 
 
+async def test_list_category_include_children(client: AsyncClient, account_id, categories):
+    """Dashboard drill-down needs parent + direct subcategory expenses together."""
+    groceries = categories["Groceries"]["id"]
+    sweets = await _subcategory(client, groceries, "IncludeChildrenSweets")
+    parent_tx = await client.post(
+        "/transactions",
+        json=_txn(account_id, category_id=groceries, amount="10.00", date="2026-11-01", description="parent spend"),
+    )
+    child_tx = await client.post(
+        "/transactions",
+        json=_txn(account_id, category_id=sweets, amount="5.00", date="2026-11-02", description="child spend"),
+    )
+    assert parent_tx.status_code == 201
+    assert child_tx.status_code == 201
+
+    exact = await client.get("/transactions", params={"category_id": groceries, "year": 2026, "month": 11})
+    assert exact.status_code == 200
+    exact_ids = {item["id"] for item in exact.json()["items"]}
+    assert parent_tx.json()["id"] in exact_ids
+    assert child_tx.json()["id"] not in exact_ids
+
+    with_children = await client.get(
+        "/transactions",
+        params={"category_id": groceries, "include_children": True, "year": 2026, "month": 11},
+    )
+    assert with_children.status_code == 200
+    child_ids = {item["id"] for item in with_children.json()["items"]}
+    assert parent_tx.json()["id"] in child_ids
+    assert child_tx.json()["id"] in child_ids
+
+
 async def test_create_split_transaction_across_categories(client: AsyncClient, account_id, categories):
     """The hypermarket-receipt case: one purchase, part everyday groceries,
     part sweets — a split's categories must share one parent (see

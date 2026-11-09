@@ -1,14 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MonthSelector } from "@/components/layout/MonthSelector";
 import { YearSelector } from "@/components/layout/YearSelector";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { SpendingByCategoryCard } from "@/components/dashboard/SpendingByCategoryCard";
 import { RecentTransactionsCard } from "@/components/dashboard/RecentTransactionsCard";
+import { CategoryTransactionsCard } from "@/components/dashboard/CategoryTransactionsCard";
 import { AlertBanner } from "@/components/insights/AlertBanner";
 import { useDashboardSummary } from "@/hooks/useDashboard";
 import { useTransactionYears } from "@/hooks/useTransactions";
 import { formatCurrency, formatSignedCurrency } from "@/lib/format";
 import { useTranslation } from "@/lib/i18n";
+import type { CategoryBreakdownItem } from "@/types";
 
 /** Share of income left over after spending (net / real_income). `null` when
  * there was no income to take a share of, rather than a misleading 0%. */
@@ -26,10 +28,24 @@ export function DashboardPage() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
+  const [selectedCategory, setSelectedCategory] = useState<{ id: number; name: string } | null>(
+    null,
+  );
   const { data: years } = useTransactionYears();
 
   const { data, isLoading, isError } = useDashboardSummary(year, month);
   const rate = data ? savingsRate(Number(data.real_income), Number(data.net)) : null;
+
+  useEffect(() => {
+    setSelectedCategory(null);
+  }, [year, month]);
+
+  function handleSelectCategory(item: CategoryBreakdownItem) {
+    if (item.category_id === null) return;
+    setSelectedCategory((prev) =>
+      prev?.id === item.category_id ? null : { id: item.category_id!, name: item.name },
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -76,9 +92,23 @@ export function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <SpendingByCategoryCard items={data?.spending_by_category ?? []} />
+        <SpendingByCategoryCard
+          items={data?.spending_by_category ?? []}
+          selectedCategoryId={selectedCategory?.id ?? null}
+          onSelectCategory={handleSelectCategory}
+        />
         <RecentTransactionsCard year={year} month={month} />
       </div>
+
+      {selectedCategory && (
+        <CategoryTransactionsCard
+          year={year}
+          month={month}
+          categoryId={selectedCategory.id}
+          categoryName={selectedCategory.name}
+          onClear={() => setSelectedCategory(null)}
+        />
+      )}
     </div>
   );
 }
