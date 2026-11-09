@@ -142,6 +142,9 @@ export function TransactionFormModal({
   const [error, setError] = useState<string | null>(null);
   const [previewCandidate, setPreviewCandidate] = useState<MergeCandidate | null>(null);
   const [cashbackAmountTouched, setCashbackAmountTouched] = useState(false);
+  // Blocks cashback auto-compute until load effect has written this session's form
+  // (otherwise a leftover draft from the previous edit can race and bleed amount).
+  const [hydratedKey, setHydratedKey] = useState<number | "new" | null>(null);
   const [importHashes, setImportHashes] = useState<ImportHash[]>([]);
   const [showHashForm, setShowHashForm] = useState(false);
   const [hashAccountId, setHashAccountId] = useState("");
@@ -174,16 +177,25 @@ export function TransactionFormModal({
 
   useEffect(() => {
     if (!open) {
+      // Drop the whole draft so the next open cannot inherit cashback/fields.
+      setForm(EMPTY_FORM);
+      setTags([]);
+      setSplitMode(false);
+      setSplitRows([emptySplitRow(), emptySplitRow()]);
       setPreviewCandidate(null);
       setCashbackAmountTouched(false);
+      setHydratedKey(null);
       setShowHashForm(false);
+      setImportHashes([]);
       setHashError(null);
       setHashSuccess(null);
       setCreateAsCopy(false);
+      setError(null);
       return;
     }
     // Copy-as-new already wrote the form from current inputs — don't wipe it.
     if (createAsCopy) {
+      setHydratedKey("new");
       setError(null);
       return;
     }
@@ -245,6 +257,7 @@ export function TransactionFormModal({
       );
       // Keep stored cashback until the user changes the cashback category.
       setCashbackAmountTouched(true);
+      setHydratedKey(transaction.id);
     } else {
       // Create: filter account → last saved create → first account in list.
       const last = readLastDefaults();
@@ -263,6 +276,7 @@ export function TransactionFormModal({
       setSplitMode(false);
       setSplitRows([emptySplitRow(), emptySplitRow()]);
       setCashbackAmountTouched(false);
+      setHydratedKey("new");
     }
     setError(null);
   }, [open, transaction, accounts, defaultAccountId, createAsCopy]);
@@ -291,11 +305,14 @@ export function TransactionFormModal({
     setHashError(null);
     setHashSuccess(null);
     setError(null);
+    setHydratedKey("new");
     setCreateAsCopy(true);
   }
 
   useEffect(() => {
     if (!open || !form.cashback_category_id || !cashbackCategoriesQuery.data) return;
+    const expectedKey = transaction && !createAsCopy ? transaction.id : "new";
+    if (hydratedKey !== expectedKey) return;
     const stillValid = cashbackCategoriesQuery.data.some(
       (category) => String(category.id) === form.cashback_category_id
     );
@@ -303,10 +320,21 @@ export function TransactionFormModal({
       setCashbackAmountTouched(false);
       setForm((prev) => ({ ...prev, cashback_category_id: "", cashback_amount: "" }));
     }
-  }, [open, form.cashback_category_id, cashbackCategoriesQuery.data]);
+  }, [
+    open,
+    form.cashback_category_id,
+    cashbackCategoriesQuery.data,
+    hydratedKey,
+    transaction,
+    createAsCopy,
+  ]);
 
   useEffect(() => {
     if (!open || cashbackAmountTouched) return;
+    const expectedKey = transaction && !createAsCopy ? transaction.id : "new";
+    // Wait until load/copy wrote this session's form — otherwise a stale draft
+    // from the previous edit can overwrite the newly loaded row's cashback.
+    if (hydratedKey !== expectedKey) return;
     // Refund clawback is manual only — auto-compute would treat the refund
     // amount like a purchase and show the full expense cashback as a pill.
     if (form.type !== "expense") return;
@@ -328,6 +356,9 @@ export function TransactionFormModal({
   }, [
     open,
     cashbackAmountTouched,
+    hydratedKey,
+    createAsCopy,
+    transaction,
     form.type,
     form.cashback_category_id,
     form.amount,
