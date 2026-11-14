@@ -88,32 +88,34 @@ export function CategoryTransactionsCard({
                     ? categoryPath(tx.category, categories)
                     : null;
                 return (
-                  <li key={tx.id}>
+                  <li key={tx.id} className="flex items-center gap-2 py-2 first:pt-0 last:pb-0">
                     <button
                       type="button"
-                      className="flex w-full items-center gap-3 py-2.5 text-left first:pt-0 last:pb-0 hover:bg-surface-2/60"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
                       onClick={() => {
                         setEditingTransaction(tx);
                         setModalOpen(true);
                       }}
                     >
                       <span
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
                         style={{ backgroundColor: `${color}26` }}
                       >
-                        <Icon size={15} style={{ color }} />
+                        <Icon size={14} style={{ color }} />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm text-text-primary">{tx.description}</span>
+                        <span className="block truncate text-sm text-text-primary underline-offset-2 hover:underline">
+                          {tx.description}
+                        </span>
                         <span className="block truncate text-xs text-text-muted">
                           {formatTransactionDate(tx.date)} · {tx.account.name}
                           {categoryLabel ? ` · ${categoryLabel}` : ""}
                         </span>
                       </span>
-                      <span className="shrink-0 text-sm font-medium tabular-nums text-text-primary">
-                        -{formatCurrency(Number(tx.amount))}
-                      </span>
                     </button>
+                    <span className="shrink-0 text-sm font-medium tabular-nums text-text-primary">
+                      -{formatCurrency(Number(tx.amount))}
+                    </span>
                   </li>
                 );
               })}
