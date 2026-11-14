@@ -61,3 +61,37 @@ def test_convert_csv_has_tbank_detectable_headers():
     first_data = csv_text.splitlines()[1]
     assert "Merchant One" in first_data
     assert "Перевод•Т-Банк" in first_data
+
+
+def test_parse_gpb_html_skips_cancelled_operations():
+    """Bank UI marks cancelled transfers with subtitle «Операция отменена»
+    — they must never enter the import preview CSV."""
+    html = """
+    <div>
+      <div><span>Сегодня</span><p>–10 000 ₽</p></div>
+      <div>
+        <div data-testid="swipe-cell-wrapper"><div>22:37</div></div>
+        <div data-testid="historyCell" tabindex="0">
+          <p title="Перевод со счета">Перевод со счета</p>
+          <p><span>additional</span>
+            <span aria-hidden="true"><p direction="debit">–9 366,18 ₽</p></span>
+          </p>
+          <p>Операция отменена</p>
+        </div>
+      </div>
+      <div>
+        <div data-testid="swipe-cell-wrapper"><div>19:35</div></div>
+        <div data-testid="historyCell" tabindex="0">
+          <p title="OZON">OZON</p>
+          <p><span>additional</span>
+            <span aria-hidden="true"><p direction="debit">–711 ₽</p></span>
+          </p>
+          <p>Маркетплейсы</p>
+        </div>
+      </div>
+    </div>
+    """
+    ops = parse_gpb_html(html, today=TODAY)
+    assert [op.description for op in ops] == ["OZON"]
+    assert "Операция отменена" not in [op.category for op in ops]
+    assert "Перевод со счета" not in [op.description for op in ops]

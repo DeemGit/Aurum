@@ -296,6 +296,11 @@ def _extract_operation(cell: _Node, day: date) -> GpbOperation | None:
         category = text
         break
 
+    # Cancelled bank ops show subtitle «Операция отменена» — never import them.
+    cancelled = "операция отменена"
+    if category.casefold() == cancelled or description.casefold() == cancelled:
+        return None
+
     bonuses = ""
     cashback_nodes = _find_descendants(cell, testid="cashback")
     if cashback_nodes:
