@@ -150,6 +150,7 @@ async def list_transactions(
     category_id: int | None = None,
     include_children: bool = Query(default=False),
     tag_id: int | None = None,
+    exclude_tag_ids: list[int] | None = Query(default=None),
     type: TransactionType | None = None,
     search: str | None = Query(default=None, min_length=1, max_length=255),
     sort: Literal["date_desc", "amount_desc", "amount_asc"] = Query(default="date_desc"),
@@ -202,6 +203,11 @@ async def list_transactions(
     if tag_id is not None:
         stmt = stmt.where(Transaction.tags.any(Tag.id == tag_id))
         count_stmt = count_stmt.where(Transaction.tags.any(Tag.id == tag_id))
+    if exclude_tag_ids:
+        # Dashboard lists: drop any txn that carries at least one excluded tag.
+        no_excluded = ~Transaction.tags.any(Tag.id.in_(exclude_tag_ids))
+        stmt = stmt.where(no_excluded)
+        count_stmt = count_stmt.where(no_excluded)
     if type is not None:
         stmt = stmt.where(Transaction.type == type)
         count_stmt = count_stmt.where(Transaction.type == type)

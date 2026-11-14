@@ -9,6 +9,7 @@ import { useTranslation } from "@/lib/i18n";
 import { categoryPath, translateCategoryName } from "@/lib/categoryLabels";
 import { useTransactions } from "@/hooks/useTransactions";
 import { useCategories } from "@/hooks/useCategories";
+import { useAppSettings } from "@/hooks/useSettings";
 import type { Transaction } from "@/types";
 
 interface CategoryTransactionsCardProps {
@@ -27,6 +28,8 @@ export function CategoryTransactionsCard({
   onClear,
 }: CategoryTransactionsCardProps) {
   const { t } = useTranslation();
+  const { data: settings } = useAppSettings();
+  const excludeTagIds = (settings?.dashboard_excluded_tags ?? []).map((tag) => tag.id);
   const { data, isLoading } = useTransactions({
     year,
     month,
@@ -35,6 +38,7 @@ export function CategoryTransactionsCard({
     type: "expense",
     page: 1,
     page_size: 50,
+    exclude_tag_ids: excludeTagIds.length ? excludeTagIds : undefined,
   });
   const { data: categories } = useCategories();
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);

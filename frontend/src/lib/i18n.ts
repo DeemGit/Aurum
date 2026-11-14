@@ -426,6 +426,9 @@ const ru = {
   "settings.riskyAllocationThresholdLabel": "Допустимая доля рискового капитала, %",
   "settings.idleCashThresholdAmountLabel": "Простаивающий кэш — сумма от",
   "settings.idleCashThresholdDaysLabel": "Простаивающий кэш — без движения, дней",
+  "settings.excludedTagsTitle": "Теги, исключённые из дашборда",
+  "settings.excludedTagsHint":
+    "Транзакции с любым из этих тегов не входят в доход, расход, net и списки на дашборде. Отчёты и страница транзакций не меняются.",
 
   "backup.title": "Резервное копирование",
   "backup.description":
@@ -1051,6 +1054,9 @@ const en: Record<keyof typeof ru, string> = {
   "settings.riskyAllocationThresholdLabel": "Max % of capital allowed at risk",
   "settings.idleCashThresholdAmountLabel": "Idle cash — balance at or above",
   "settings.idleCashThresholdDaysLabel": "Idle cash — no activity for, days",
+  "settings.excludedTagsTitle": "Tags excluded from dashboard",
+  "settings.excludedTagsHint":
+    "Transactions with any of these tags are left out of income, spending, net, and dashboard lists. Reports and the transactions page are unchanged.",
 
   "backup.title": "Backup & Restore",
   "backup.description":

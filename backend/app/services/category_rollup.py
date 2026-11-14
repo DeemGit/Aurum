@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.category import Category
 from app.models.enums import TransactionType
+from app.models.tag import Tag
 from app.models.transaction import Transaction, TransactionSplit
 from app.services.money_effects import refund_total_for_expense_ids
 
@@ -67,6 +68,7 @@ async def _raw_category_contributions(
     transaction_type: TransactionType,
     start_date: date_ | None,
     end_date: date_ | None,
+    exclude_tag_ids: list[int] | None = None,
 ) -> list[tuple[int, int, Decimal]]:
     """(transaction_id, category_id, amount) for every category a
     transaction of this type/date-range contributed to. A plain transaction
@@ -88,6 +90,11 @@ async def _raw_category_contributions(
     if end_date is not None:
         plain_stmt = plain_stmt.where(Transaction.date <= end_date)
         split_stmt = split_stmt.where(Transaction.date <= end_date)
+    if exclude_tag_ids:
+        # Omit any transaction that carries at least one excluded tag.
+        no_excluded = ~Transaction.tags.any(Tag.id.in_(exclude_tag_ids))
+        plain_stmt = plain_stmt.where(no_excluded)
+        split_stmt = split_stmt.where(no_excluded)
 
     plain_rows = (await session.execute(plain_stmt)).all()
     split_rows = (await session.execute(split_stmt)).all()
@@ -100,12 +107,17 @@ async def rollup_spending_by_top_level_category(
     transaction_type: TransactionType,
     start_date: date_ | None = None,
     end_date: date_ | None = None,
+    exclude_tag_ids: list[int] | None = None,
 ) -> list[CategoryRollupItem]:
     """Every top-level category's total for the period, sorted by amount
     desc (category sort_order as tiebreak — same order the SQL-only version
     used to produce)."""
     contributions = await _raw_category_contributions(
-        session, transaction_type=transaction_type, start_date=start_date, end_date=end_date
+        session,
+        transaction_type=transaction_type,
+        start_date=start_date,
+        end_date=end_date,
+        exclude_tag_ids=exclude_tag_ids,
     )
     if not contributions:
         return []
@@ -116,7 +128,9 @@ async def rollup_spending_by_top_level_category(
     expense_amounts: dict[int, Decimal] = {}
     if transaction_type == TransactionType.EXPENSE:
         expense_ids = {txn_id for txn_id, _, _ in contributions}
-        refund_totals = await refund_total_for_expense_ids(session, expense_ids)
+        refund_totals = await refund_total_for_expense_ids(
+            session, expense_ids, exclude_tag_ids=exclude_tag_ids
+        )
         if refund_totals:
             amount_rows = await session.execute(
                 select(Transaction.id, Transaction.amount).where(Transaction.id.in_(expense_ids))

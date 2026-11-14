@@ -3,6 +3,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import APP_VERSION
+from app.schemas.tag import TagRead
 
 
 class AppSettingsRead(BaseModel):
@@ -14,6 +15,8 @@ class AppSettingsRead(BaseModel):
     risky_allocation_threshold_percent: int
     idle_cash_threshold_amount: Decimal
     idle_cash_threshold_days: int
+    # Tags whose transactions are omitted from dashboard totals and lists.
+    dashboard_excluded_tags: list[TagRead] = Field(default_factory=list)
     # Not a stored column: the default fills itself in when FastAPI validates
     # the ORM row against this model, so neither route has to assemble it.
     # It lives on this (authenticated) response rather than on /api/health,
@@ -42,3 +45,5 @@ class AppSettingsUpdate(BaseModel):
     # depository account needs to hit before idle_cash fires.
     idle_cash_threshold_amount: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     idle_cash_threshold_days: int | None = Field(default=None, ge=1, le=365)
+    # Full replacement of the excluded-tag set when present (empty list clears).
+    dashboard_excluded_tag_ids: list[int] | None = None

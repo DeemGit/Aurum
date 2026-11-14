@@ -4,7 +4,7 @@ for why this doesn't do currency conversion) and the proactive-alert
 thresholds consumed by services/insights_service.py."""
 from decimal import Decimal
 
-from sqlalchemy import Integer, Numeric, String
+from sqlalchemy import ForeignKey, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -29,3 +29,13 @@ class AppSettings(Base):
     # working. In the app's display currency (see `currency` above).
     idle_cash_threshold_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("1000"))
     idle_cash_threshold_days: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+
+
+class DashboardExcludedTag(Base):
+    """Tag ids whose transactions are omitted from every dashboard aggregate
+    and list. Not a column on app_settings — a small set table so deleting a
+    tag cascades cleanly without orphan ids in a JSON blob."""
+
+    __tablename__ = "dashboard_excluded_tags"
+
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)

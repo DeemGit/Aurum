@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.enums import TransactionType
+from app.models.tag import Tag
 from app.models.transaction import Transaction
 
 
@@ -89,7 +90,10 @@ async def refund_amounts_by_original_expense_date(
 
 
 async def refund_total_for_expense_ids(
-    session: AsyncSession, expense_ids: set[int]
+    session: AsyncSession,
+    expense_ids: set[int],
+    *,
+    exclude_tag_ids: list[int] | None = None,
 ) -> dict[int, Decimal]:
     if not expense_ids:
         return {}
@@ -97,6 +101,10 @@ async def refund_total_for_expense_ids(
         Transaction.type == TransactionType.REFUND,
         Transaction.refund_of_transaction_id.in_(expense_ids),
     )
+    # Dashboard exclusion: a refund with an excluded tag must not reduce
+    # spent for expenses that remain in the aggregate.
+    if exclude_tag_ids:
+        stmt = stmt.where(~Transaction.tags.any(Tag.id.in_(exclude_tag_ids)))
     totals: dict[int, Decimal] = defaultdict(Decimal)
     for expense_id, amount in (await session.execute(stmt)).all():
         if expense_id is not None:

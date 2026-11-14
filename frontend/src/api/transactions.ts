@@ -13,6 +13,8 @@ export interface TransactionFilters {
   /** When true with category_id, also match direct subcategories (dashboard drill-down). */
   include_children?: boolean;
   tag_id?: number;
+  /** Omit transactions that carry any of these tags (dashboard lists). */
+  exclude_tag_ids?: number[];
   type?: string;
   search?: string;
   sort?: TransactionSort;
@@ -23,7 +25,13 @@ export interface TransactionFilters {
 export function fetchTransactions(filters: TransactionFilters = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
-    if (value !== undefined && value !== null) params.set(key, String(value));
+    if (value === undefined || value === null) return;
+    // Repeated query params for FastAPI list[int] (exclude_tag_ids=1&exclude_tag_ids=2).
+    if (Array.isArray(value)) {
+      for (const item of value) params.append(key, String(item));
+      return;
+    }
+    params.set(key, String(value));
   });
   return api.get<TransactionPage>(`/transactions?${params.toString()}`);
 }

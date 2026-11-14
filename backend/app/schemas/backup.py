@@ -231,6 +231,8 @@ class AppSettingsBackup(BaseModel):
     # still imports cleanly under the same format version.
     idle_cash_threshold_amount: Decimal = Decimal("1000")
     idle_cash_threshold_days: int = 60
+    # Tag ids omitted from dashboard aggregates; defaulted for older backups.
+    dashboard_excluded_tag_ids: list[int] = Field(default_factory=list)
 
 
 class BackupPayload(BaseModel):

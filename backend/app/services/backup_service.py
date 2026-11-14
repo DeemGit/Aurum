@@ -28,6 +28,7 @@ from app.models.recurring import RecurringTransaction
 from app.models.settings import AppSettings
 from app.models.tag import Tag
 from app.models.transaction import Transaction, TransactionSplit
+from app.services.settings_service import list_dashboard_excluded_tag_ids, replace_dashboard_excluded_tags
 from app.schemas.backup import (
     AccountBackup,
     AppSettingsBackup,
@@ -92,7 +93,13 @@ async def build_backup(session: AsyncSession) -> BackupPayload:
         goals=[GoalBackup.model_validate(row) for row in goals],
         goal_contributions=[GoalContributionBackup.model_validate(row) for row in goal_contributions],
         recurring_transactions=[RecurringTransactionBackup.model_validate(row) for row in recurring_transactions],
-        app_settings=AppSettingsBackup.model_validate(app_settings) if app_settings else AppSettingsBackup(currency="USD"),
+        app_settings=(
+            AppSettingsBackup.model_validate(app_settings).model_copy(
+                update={"dashboard_excluded_tag_ids": await list_dashboard_excluded_tag_ids(session)}
+            )
+            if app_settings
+            else AppSettingsBackup(currency="USD")
+        ),
     )
 
 
@@ -302,13 +309,21 @@ async def restore_backup(session: AsyncSession, payload: BackupPayload) -> None:
         await _reset_sequence(session, "recurring_transactions", payload.recurring_transactions)
 
         # Singleton row — updated in place, not deleted/recreated (no
-        # sequence to reset, id is always 1).
+        # sequence to reset, id is always 1). Excluded tag ids live in a
+        # side table and must not be setattr'd onto AppSettings.
+        settings_data = payload.app_settings.model_dump()
+        excluded_tag_ids = settings_data.pop("dashboard_excluded_tag_ids", [])
         app_settings = await session.get(AppSettings, 1)
         if app_settings is None:
-            session.add(AppSettings(id=1, **payload.app_settings.model_dump()))
+            session.add(AppSettings(id=1, **settings_data))
         else:
-            for field, value in payload.app_settings.model_dump().items():
+            for field, value in settings_data.items():
                 setattr(app_settings, field, value)
+        # Tags are already restored with original ids; keep only ids that
+        # still exist in this payload (ignore stale references).
+        restored_tag_ids = set(tags_by_id)
+        valid_excluded = [tag_id for tag_id in excluded_tag_ids if tag_id in restored_tag_ids]
+        await replace_dashboard_excluded_tags(session, valid_excluded)
 
         await session.commit()
     except HTTPException:

@@ -6,6 +6,7 @@ import { useTranslation } from "@/lib/i18n";
 import { categoryPath, translateCategoryName } from "@/lib/categoryLabels";
 import { useTransactions } from "@/hooks/useTransactions";
 import { useCategories } from "@/hooks/useCategories";
+import { useAppSettings } from "@/hooks/useSettings";
 
 interface RecentTransactionsCardProps {
   year: number;
@@ -14,7 +15,15 @@ interface RecentTransactionsCardProps {
 
 export function RecentTransactionsCard({ year, month }: RecentTransactionsCardProps) {
   const { t } = useTranslation();
-  const { data, isLoading } = useTransactions({ year, month, page: 1, page_size: 6 });
+  const { data: settings } = useAppSettings();
+  const excludeTagIds = (settings?.dashboard_excluded_tags ?? []).map((tag) => tag.id);
+  const { data, isLoading } = useTransactions({
+    year,
+    month,
+    page: 1,
+    page_size: 6,
+    exclude_tag_ids: excludeTagIds.length ? excludeTagIds : undefined,
+  });
   const { data: categories } = useCategories();
 
   return (

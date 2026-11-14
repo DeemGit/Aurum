@@ -603,8 +603,21 @@ export interface AppSettings {
   risky_allocation_threshold_percent: number;
   idle_cash_threshold_amount: string;
   idle_cash_threshold_days: number;
+  /** Tags whose transactions are omitted from dashboard totals and lists. */
+  dashboard_excluded_tags: Tag[];
   /** Read-only: the running backend release. Comes back here rather than
    * from /api/health, which is served without auth. */
   app_version: string;
+}
+
+/** PATCH /settings body — write side uses tag ids, not the full Tag objects. */
+export interface AppSettingsUpdate {
+  currency?: string;
+  negative_cash_flow_threshold_months?: number;
+  net_worth_decline_threshold_months?: number;
+  risky_allocation_threshold_percent?: number;
+  idle_cash_threshold_amount?: string;
+  idle_cash_threshold_days?: number;
+  dashboard_excluded_tag_ids?: number[];
 }
 
