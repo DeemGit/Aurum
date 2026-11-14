@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Copy, Plus, X } from "lucide-react";
+import { Copy, Plus, Wand2, X } from "lucide-react";
 import { Dialog } from "@/components/ui/Dialog";
 import { Button } from "@/components/ui/Button";
 import { Input, Label, Select } from "@/components/ui/Input";
@@ -19,9 +19,14 @@ import { ApiError } from "@/api/client";
 import { BANK_PRESETS } from "@/lib/bankPresets";
 import { computeCashbackAmount } from "@/lib/cashback";
 import { useTranslation, type TranslationKey } from "@/lib/i18n";
-import { buildHierarchicalCategories, translateCategoryName } from "@/lib/categoryLabels";
+import { buildHierarchicalCategories, categoryPath, translateCategoryName } from "@/lib/categoryLabels";
 import { computeImportHash, toOccurredAtIso } from "@/lib/csv";
 import { formatCurrency, formatDeltaSeconds, formatOccurredAt, formatTransactionDate } from "@/lib/format";
+import {
+  proportionalSplitAmounts,
+  suggestFromHistory,
+  type HistorySuggestions,
+} from "@/lib/suggestFromHistory";
 import type { ImportHash, Tag, Transaction, TransactionInput, TransactionSplitInput, TransactionType } from "@/types";
 
 type MergeCandidate = { transaction: Transaction; delta_seconds: number };
@@ -156,6 +161,9 @@ export function TransactionFormModal({
   const [hashPresetId, setHashPresetId] = useState("");
   const [hashError, setHashError] = useState<string | null>(null);
   const [hashSuccess, setHashSuccess] = useState<string | null>(null);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState<HistorySuggestions | null>(null);
 
   const cashbackCategoriesQuery = useQuery({
     queryKey: ["cashback-categories", form.account_id],
@@ -191,6 +199,9 @@ export function TransactionFormModal({
       setHashSuccess(null);
       setCreateAsCopy(false);
       setError(null);
+      setSuggestOpen(false);
+      setSuggestLoading(false);
+      setSuggestions(null);
       return;
     }
     // Copy-as-new already wrote the form from current inputs — don't wipe it.
@@ -528,6 +539,111 @@ export function TransactionFormModal({
 
   const showCopyButton =
     Boolean(transaction) && !createAsCopy && form.type !== "transfer";
+  const showSuggestButton =
+    form.type !== "transfer" && form.description.trim().length > 0;
+
+  async function handleSuggestFromHistory() {
+    if (!showSuggestButton) return;
+    setSuggestOpen(true);
+    setSuggestLoading(true);
+    setSuggestions(null);
+    try {
+      const result = await suggestFromHistory({
+        description: form.description,
+        type: form.type,
+        accountId: form.account_id ? Number(form.account_id) : null,
+        date: form.date,
+        excludeId: createAsCopy ? null : transaction?.id ?? null,
+      });
+      setSuggestions(result);
+    } catch {
+      setSuggestions({ category: null, cashback: null });
+    } finally {
+      setSuggestLoading(false);
+    }
+  }
+
+  function applyHistorySuggestions() {
+    if (!suggestions) return;
+    const categorySuggestion = suggestions.category;
+    const cashbackSuggestion = suggestions.cashback;
+
+    if (categorySuggestion) {
+      if (categorySuggestion.splits.length > 0) {
+        const firstCat = (categories ?? []).find(
+          (category) => category.id === categorySuggestion.splits[0]?.category_id,
+        );
+        const baseId = firstCat ? (firstCat.parent_id ?? firstCat.id) : null;
+        const amounts = proportionalSplitAmounts(
+          categorySuggestion.splits.map((split) => split.amount),
+          form.amount,
+        );
+        setForm((prev) => ({
+          ...prev,
+          category_id: baseId != null ? String(baseId) : "",
+          cashback_category_id: cashbackSuggestion
+            ? String(cashbackSuggestion.cashback_category_id)
+            : prev.cashback_category_id,
+        }));
+        setSplitMode(true);
+        setSplitRows(
+          categorySuggestion.splits.map((split, index) => ({
+            key: generateRowKey(),
+            category_id: String(split.category_id),
+            amount: amounts[index] ?? "0.00",
+            note: split.note ?? "",
+          })),
+        );
+      } else {
+        setForm((prev) => ({
+          ...prev,
+          category_id:
+            categorySuggestion.category_id != null ? String(categorySuggestion.category_id) : "",
+          cashback_category_id: cashbackSuggestion
+            ? String(cashbackSuggestion.cashback_category_id)
+            : prev.cashback_category_id,
+        }));
+        setSplitMode(false);
+        setSplitRows([emptySplitRow(), emptySplitRow()]);
+      }
+    } else if (cashbackSuggestion) {
+      setForm((prev) => ({
+        ...prev,
+        cashback_category_id: String(cashbackSuggestion.cashback_category_id),
+      }));
+    }
+
+    if (cashbackSuggestion) {
+      setCashbackAmountTouched(false);
+    }
+    setSuggestOpen(false);
+    setSuggestions(null);
+  }
+
+  function suggestCategoryLabel(): string {
+    if (!suggestions?.category) return "—";
+    const source = suggestions.category.source;
+    if (suggestions.category.splits.length > 0) {
+      return suggestions.category.splits
+        .map((split) => {
+          const cat = (categories ?? []).find((c) => c.id === split.category_id) ?? source.splits.find((s) => s.category_id === split.category_id)?.category;
+          return cat ? translateCategoryName(cat.name) : "?";
+        })
+        .join(" + ");
+    }
+    if (source.category) return categoryPath(source.category, categories);
+    return "—";
+  }
+
+  function suggestCashbackLabel(): string {
+    if (!suggestions?.cashback) return "—";
+    const fromSource = suggestions.cashback.source.cashback_category?.name;
+    if (fromSource) return fromSource;
+    const fromList = cashbackCategoriesQuery.data?.find(
+      (category) => category.id === suggestions.cashback!.cashback_category_id,
+    );
+    return fromList?.name ?? "—";
+  }
 
   return (
     <>
@@ -1106,7 +1222,7 @@ export function TransactionFormModal({
         {error && <p className="text-sm text-danger">{error}</p>}
 
         <div className="flex items-center justify-between gap-2 pt-2">
-          <div>
+          <div className="flex items-center gap-1">
             {showCopyButton && (
               <Button
                 type="button"
@@ -1117,6 +1233,18 @@ export function TransactionFormModal({
                 title={t("transactions.form.copyAsNew")}
               >
                 <Copy size={18} />
+              </Button>
+            )}
+            {showSuggestButton && (
+              <Button
+                type="button"
+                variant="ghost"
+                className="px-2"
+                onClick={() => void handleSuggestFromHistory()}
+                aria-label={t("transactions.form.suggestFromHistory")}
+                title={t("transactions.form.suggestFromHistory")}
+              >
+                <Wand2 size={18} />
               </Button>
             )}
           </div>
@@ -1131,6 +1259,66 @@ export function TransactionFormModal({
         </div>
       </form>
     </Dialog>
+
+      <Dialog
+        open={suggestOpen}
+        onClose={() => {
+          setSuggestOpen(false);
+          setSuggestions(null);
+        }}
+        title={t("transactions.form.suggestTitle")}
+        closeOnOverlayClick={false}
+      >
+        {suggestLoading ? (
+          <p className="py-6 text-center text-sm text-text-muted">{t("common.loading")}</p>
+        ) : !suggestions || (!suggestions.category && !suggestions.cashback) ? (
+          <div className="space-y-4">
+            <p className="text-sm text-text-secondary">{t("transactions.form.suggestEmpty")}</p>
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setSuggestOpen(false);
+                  setSuggestions(null);
+                }}
+              >
+                {t("common.close")}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <dl className="space-y-2 text-sm">
+              <div>
+                <dt className="text-xs text-text-muted">{t("transactions.form.categoryLabel")}</dt>
+                <dd className="text-text-primary">{suggestCategoryLabel()}</dd>
+              </div>
+              {(form.type === "expense" || form.type === "refund") && (
+                <div>
+                  <dt className="text-xs text-text-muted">{t("transactions.form.cashbackCategoryLabel")}</dt>
+                  <dd className="text-text-primary">{suggestCashbackLabel()}</dd>
+                </div>
+              )}
+            </dl>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setSuggestOpen(false);
+                  setSuggestions(null);
+                }}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button type="button" onClick={applyHistorySuggestions}>
+                {t("transactions.form.suggestApply")}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Dialog>
 
       <Dialog
         open={previewCandidate !== null}
