@@ -268,7 +268,7 @@ const ru = {
   "transactions.import.gpbConvert": "Преобразовать",
   "transactions.import.gpbConverting": "Преобразование…",
   "transactions.import.gpbConvertError": "Не удалось разобрать HTML. Проверьте, что вставлена лента операций ГПБ.",
-  "transactions.import.alfaHtmlHint": "Вставьте HTML ленты «История операций» из Альфа-Онлайн. Дата дня берётся из data-date; «Сегодня»/«Вчера» — запасной вариант от даты ниже.",
+  "transactions.import.alfaHtmlHint": "Вставьте HTML ленты «История операций» из Альфа-Онлайн. Дата дня берётся из data-date; «Сегодня»/«Вчера» — запасной вариант от даты ниже.<br>copy($x(\"(//div[@data-date])[1]\")[0].parentElement.parentElement)",
   "transactions.import.alfaHtmlLabel": "HTML выписки Альфа-Банка",
   "transactions.import.alfaHtmlPlaceholder": "Вставьте сюда разметку истории операций Альфа-Банка…",
   "transactions.import.alfaConvert": "Преобразовать",
