@@ -1,4 +1,5 @@
 """Multicurrency transfers, refunds, import_hash dedupe, cashback, matching."""
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from httpx import AsyncClient
@@ -351,6 +352,55 @@ async def test_merge_transfer_keeps_both_import_hashes(client: AsyncClient, cate
     assert reimport.status_code == 201, reimport.text
     assert reimport.json()["created"] == 0
     assert reimport.json()["skipped_duplicates"] == 2
+
+
+async def test_merge_transfer_keeps_wall_clock_date_not_utc_day(client: AsyncClient, categories):
+    """Alfa midnight +03 must not pull merge date onto the previous UTC calendar day."""
+    a = (await client.post("/accounts", json={"name": "GPB", "type": "checking", "currency": "RUB"})).json()
+    b = (await client.post("/accounts", json={"name": "Alfa", "type": "checking", "currency": "RUB"})).json()
+    groceries = categories["Groceries"]["id"]
+    salary = categories["Salary"]["id"]
+
+    expense = await client.post(
+        "/transactions",
+        json=_txn(
+            a["id"],
+            category_id=groceries,
+            amount="150.00",
+            date="2026-11-08",
+            occurred_at="2026-11-08T21:11:00+03:00",
+            description="gpb out",
+        ),
+    )
+    income = await client.post(
+        "/transactions",
+        json=_txn(
+            b["id"],
+            type="income",
+            category_id=salary,
+            amount="150.00",
+            date="2026-11-08",
+            occurred_at="2026-11-08T00:00:00+03:00",
+            description="alfa in",
+        ),
+    )
+    assert expense.status_code == 201, expense.text
+    assert income.status_code == 201, income.text
+    assert expense.json()["date"] == "2026-11-08"
+    assert income.json()["date"] == "2026-11-08"
+
+    merged = await client.post(
+        "/transactions/merge-transfer",
+        json={
+            "source_transaction_id": expense.json()["id"],
+            "destination_transaction_id": income.json()["id"],
+        },
+    )
+    assert merged.status_code == 201, merged.text
+    body = merged.json()
+    assert body["date"] == "2026-11-08"
+    occurred = datetime.fromisoformat(body["occurred_at"].replace("Z", "+00:00"))
+    assert occurred.astimezone(timezone.utc) == datetime(2026, 11, 8, 18, 11, tzinfo=timezone.utc)
 
 
 async def test_attach_import_hash_to_transfer(client: AsyncClient, categories):

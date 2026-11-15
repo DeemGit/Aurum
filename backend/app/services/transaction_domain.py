@@ -159,7 +159,11 @@ async def merge_into_transfer(
     income_amount = income.amount
     description = expense.description or income.description
     merchant = expense.merchant or income.merchant
-    occurred = min(_as_aware_utc(expense.occurred_at), _as_aware_utc(income.occurred_at))
+    # Legs already store wall-clock calendar days; never derive date from a UTC
+    # instant — Alfa midnight +03 becomes previous-day UTC and used to win min().
+    date_value = max(expense.date, income.date)
+    # Prefer the later absolute moment so a real bank timestamp beats synthetic 00:00.
+    occurred = max(_as_aware_utc(expense.occurred_at), _as_aware_utc(income.occurred_at))
 
     # Delete first and flush so unique (account_id, import_hash) is free before INSERT.
     await session.delete(expense)
@@ -177,7 +181,7 @@ async def merge_into_transfer(
         description=description,
         merchant=merchant,
         notes=None,
-        date=occurred.date(),
+        date=date_value,
         occurred_at=occurred,
         # Legacy column mirrors the source leg; both digests live in import_hashes.
         import_hash=expense_hash,
