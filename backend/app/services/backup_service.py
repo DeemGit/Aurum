@@ -27,7 +27,7 @@ from app.models.goal import Goal, GoalContribution
 from app.models.recurring import RecurringTransaction
 from app.models.settings import AppSettings
 from app.models.tag import Tag
-from app.models.transaction import Transaction, TransactionSplit
+from app.models.transaction import ImportLog, Transaction, TransactionSplit
 from app.services.settings_service import list_dashboard_excluded_tag_ids, replace_dashboard_excluded_tags
 from app.schemas.backup import (
     AccountBackup,
@@ -42,6 +42,7 @@ from app.schemas.backup import (
     CryptoTransactionBackup,
     GoalBackup,
     GoalContributionBackup,
+    ImportLogBackup,
     RecurringTransactionBackup,
     TagBackup,
     TransactionBackup,
@@ -57,6 +58,7 @@ async def build_backup(session: AsyncSession) -> BackupPayload:
     accounts = (await session.execute(select(Account))).scalars().all()
     categories = (await session.execute(select(Category))).scalars().all()
     tags = (await session.execute(select(Tag))).scalars().all()
+    import_logs = (await session.execute(select(ImportLog).order_by(ImportLog.id))).scalars().all()
     transactions = (await session.execute(select(Transaction).options(selectinload(Transaction.tags)))).scalars().all()
     transaction_splits = (await session.execute(select(TransactionSplit))).scalars().all()
     assets = (await session.execute(select(Asset))).scalars().all()
@@ -77,6 +79,7 @@ async def build_backup(session: AsyncSession) -> BackupPayload:
         accounts=[AccountBackup.model_validate(row) for row in accounts],
         categories=[CategoryBackup.model_validate(row) for row in categories],
         tags=[TagBackup.model_validate(row) for row in tags],
+        import_logs=[ImportLogBackup.model_validate(row) for row in import_logs],
         transactions=[
             TransactionBackup.model_validate(row, from_attributes=True).model_copy(
                 update={"tag_ids": [tag.id for tag in row.tags]}
@@ -108,6 +111,7 @@ def _validate_references(payload: BackupPayload) -> None:
     category_ids = {row.id for row in payload.categories}
     asset_ids = {row.id for row in payload.assets}
     tag_ids = {row.id for row in payload.tags}
+    import_log_ids = {row.id for row in payload.import_logs}
 
     for c in payload.categories:
         if c.parent_id is not None and c.parent_id not in category_ids:
@@ -122,6 +126,8 @@ def _validate_references(payload: BackupPayload) -> None:
             )
         if t.category_id is not None and t.category_id not in category_ids:
             raise HTTPException(400, f"Transaction {t.id} references unknown category_id {t.category_id}")
+        if t.import_log_id is not None and t.import_log_id not in import_log_ids:
+            raise HTTPException(400, f"Transaction {t.id} references unknown import_log_id {t.import_log_id}")
         for tag_id in t.tag_ids:
             if tag_id not in tag_ids:
                 raise HTTPException(400, f"Transaction {t.id} references unknown tag_id {tag_id}")
@@ -213,6 +219,7 @@ async def restore_backup(session: AsyncSession, payload: BackupPayload) -> None:
         # here anyway to keep this block's ordering self-documenting.
         await session.execute(delete(TransactionSplit))
         await session.execute(delete(Transaction))
+        await session.execute(delete(ImportLog))
         await session.execute(delete(Tag))
         await session.execute(delete(Asset))
         await session.execute(delete(Category))
@@ -234,6 +241,7 @@ async def restore_backup(session: AsyncSession, payload: BackupPayload) -> None:
         # once everything is flushed and has real identities.
         tags_by_id = {row.id: Tag(**row.model_dump()) for row in payload.tags}
         session.add_all(tags_by_id.values())
+        session.add_all(ImportLog(**row.model_dump()) for row in payload.import_logs)
         # tags=[] at construction keeps the collection "loaded" on the
         # transient object — reassigning it after flush (below) would
         # otherwise trigger an implicit lazy-load, which async SQLAlchemy
@@ -294,6 +302,7 @@ async def restore_backup(session: AsyncSession, payload: BackupPayload) -> None:
         await _reset_sequence(session, "accounts", payload.accounts)
         await _reset_sequence(session, "categories", payload.categories)
         await _reset_sequence(session, "tags", payload.tags)
+        await _reset_sequence(session, "import_logs", payload.import_logs)
         await _reset_sequence(session, "assets", payload.assets)
         await _reset_sequence(session, "transactions", payload.transactions)
         await _reset_sequence(session, "transaction_splits", payload.transaction_splits)

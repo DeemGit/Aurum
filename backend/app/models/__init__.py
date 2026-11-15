@@ -8,7 +8,7 @@ from app.models.goal import Goal, GoalContribution
 from app.models.recurring import RecurringTransaction
 from app.models.settings import AppSettings, DashboardExcludedTag
 from app.models.tag import Tag
-from app.models.transaction import Transaction, TransactionImportHash, TransactionSplit
+from app.models.transaction import ImportLog, Transaction, TransactionImportHash, TransactionSplit
 
 __all__ = [
     "Account",
@@ -26,6 +26,7 @@ __all__ = [
     "DashboardExcludedTag",
     "Goal",
     "GoalContribution",
+    "ImportLog",
     "RecurringTransaction",
     "Tag",
     "Transaction",

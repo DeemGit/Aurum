@@ -74,6 +74,8 @@ class TransactionBackup(BaseModel):
     # fills midnight UTC from date when omitted.
     occurred_at: datetime | None = None
     import_hash: str | None = None
+    # Defaulted so a backup exported before import_logs existed still imports.
+    import_log_id: int | None = None
     cashback_category_id: int | None = None
     cashback_amount: Decimal | None = None
     is_cashback: bool = False
@@ -82,6 +84,14 @@ class TransactionBackup(BaseModel):
     # explicitly in build_backup() from the `tags` relationship, since
     # from_attributes can't map a `tags` relationship to a `tag_ids` field.
     tag_ids: list[int] = Field(default_factory=list)
+
+
+class ImportLogBackup(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    imported_at: datetime
+    source: str
 
 
 class TransactionSplitBackup(BaseModel):
@@ -248,6 +258,8 @@ class BackupPayload(BaseModel):
     # Defaulted so a backup exported before tags existed still imports
     # cleanly under the same format version.
     tags: list[TagBackup] = Field(default_factory=list)
+    # Defaulted so a backup exported before import_logs existed still imports.
+    import_logs: list[ImportLogBackup] = Field(default_factory=list)
     transactions: list[TransactionBackup]
     # Defaulted so a backup exported before transaction splitting existed
     # still imports cleanly under the same format version.

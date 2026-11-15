@@ -1,5 +1,6 @@
+import re
 from datetime import date as date_
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Literal
 
@@ -14,7 +15,7 @@ from app.models.cashback import CashbackCategory
 from app.models.category import Category
 from app.models.enums import CategoryKind, TransactionType
 from app.models.tag import Tag
-from app.models.transaction import Transaction, TransactionImportHash, TransactionSplit
+from app.models.transaction import ImportLog, Transaction, TransactionImportHash, TransactionSplit
 from app.schemas.transaction import (
     AlfaHtmlConvertRequest,
     AlfaHtmlConvertResult,
@@ -37,6 +38,8 @@ from app.schemas.transaction import (
     split_rule_violation,
     transfer_rule_violation,
 )
+
+_IMPORT_SEARCH_RE = re.compile(r"^[iI](\d+)$")
 from app.services.alfa_html_statement import convert_alfa_html_to_csv
 from app.services.gpb_html_statement import convert_gpb_html_to_csv
 from app.services.cashback_service import (
@@ -254,18 +257,25 @@ async def list_transactions(
         # matches description, merchant, and notes so any of those fields can surface it.
         # An all-digit query also matches amount truncated to whole units
         # (search "1842" → 1842.00 and 1842.12).
+        # `i33` / `I33` is a dedicated import-batch lookup (no placeholder hint).
         query = search.strip()
-        pattern = f"%{query}%"
-        clauses = [
-            Transaction.description.ilike(pattern),
-            Transaction.merchant.ilike(pattern),
-            Transaction.notes.ilike(pattern),
-        ]
-        if query.isdigit():
-            clauses.append(func.trunc(Transaction.amount) == Decimal(query))
-        search_clause = or_(*clauses)
-        stmt = stmt.where(search_clause)
-        count_stmt = count_stmt.where(search_clause)
+        import_match = _IMPORT_SEARCH_RE.fullmatch(query)
+        if import_match:
+            import_log_id = int(import_match.group(1))
+            stmt = stmt.where(Transaction.import_log_id == import_log_id)
+            count_stmt = count_stmt.where(Transaction.import_log_id == import_log_id)
+        else:
+            pattern = f"%{query}%"
+            clauses = [
+                Transaction.description.ilike(pattern),
+                Transaction.merchant.ilike(pattern),
+                Transaction.notes.ilike(pattern),
+            ]
+            if query.isdigit():
+                clauses.append(func.trunc(Transaction.amount) == Decimal(query))
+            search_clause = or_(*clauses)
+            stmt = stmt.where(search_clause)
+            count_stmt = count_stmt.where(search_clause)
 
     total = (await session.execute(count_stmt)).scalar_one()
 
@@ -619,6 +629,16 @@ async def bulk_create_transactions(
 
     if transactions or hashes_backfilled:
         if transactions:
+            # One ImportLog per bulk call that actually inserts rows — skips /
+            # hash backfills do not get a new import number.
+            import_log = ImportLog(
+                imported_at=datetime.now(timezone.utc),
+                source=payload.source,
+            )
+            session.add(import_log)
+            await session.flush()
+            for transaction in transactions:
+                transaction.import_log_id = import_log.id
             session.add_all(transactions)
         await session.commit()
         log_destructive(

@@ -653,7 +653,12 @@ export function TransactionFormModal({
       closeOnOverlayClick={false}
       title={
         transaction && !createAsCopy
-          ? t("transactions.form.editTitle", { id: transaction.id })
+          ? transaction.import_log_id != null
+            ? t("transactions.form.editTitleWithImport", {
+                id: transaction.id,
+                importBrace: `{${transaction.import_log_id}}`,
+              })
+            : t("transactions.form.editTitle", { id: transaction.id })
           : t("transactions.form.newTitle")
       }
     >

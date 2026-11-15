@@ -116,6 +116,8 @@ export interface Transaction {
   occurred_at: string;
   import_hash: string | null;
   import_hashes?: ImportHash[];
+  /** Bulk-import batch id when the row was created via CSV/HTML import. */
+  import_log_id: number | null;
   cashback_category_id: number | null;
   cashback_amount: string | null;
   is_cashback: boolean;

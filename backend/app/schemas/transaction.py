@@ -379,6 +379,8 @@ class TransactionRead(TransactionFields):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    # Bulk-import batch id (NULL for manual entries). Not writable by clients.
+    import_log_id: int | None = None
     account: AccountRead
     # Present for transfers so the list UI can show "Source → Dest" without a second lookup.
     transfer_account: AccountRead | None = None
@@ -420,6 +422,13 @@ class TransactionBulkCreate(BaseModel):
     than aborting the batch."""
 
     items: list[TransactionCreate] = Field(min_length=1, max_length=5000)
+    # How this batch was produced — free text from the UI (csv / gpb-html / …).
+    source: str = Field(min_length=1, max_length=64)
+
+    @field_validator("source")
+    @classmethod
+    def _normalize_source(cls, value: str) -> str:
+        return value.strip()
 
 
 class TransactionBulkCreateResult(BaseModel):

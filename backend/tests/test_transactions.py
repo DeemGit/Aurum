@@ -21,6 +21,7 @@ async def test_bulk_create_transactions(client: AsyncClient, account_id, categor
     resp = await client.post(
         "/transactions/bulk",
         json={
+            "source": "csv",
             "items": [
                 _txn(account_id, category_id=groceries, description="csv row 1", date="2026-01-01"),
                 _txn(account_id, category_id=groceries, description="csv row 2", date="2026-01-02"),
@@ -34,12 +35,113 @@ async def test_bulk_create_transactions(client: AsyncClient, account_id, categor
     assert listed.json()["total"] == 2
 
 
+async def test_bulk_create_assigns_import_log_only_to_new_rows(client: AsyncClient, account_id, categories):
+    """One ImportLog per bulk that inserts; skips/backfills keep their old import_log_id."""
+    groceries = categories["Groceries"]["id"]
+    digest = "c" * 64
+
+    first = await client.post(
+        "/transactions/bulk",
+        json={
+            "source": "csv",
+            "items": [
+                _txn(
+                    account_id,
+                    category_id=groceries,
+                    description="import batch a",
+                    date="2026-03-01",
+                    import_hash=digest,
+                )
+            ],
+        },
+    )
+    assert first.status_code == 201
+    assert first.json()["created"] == 1
+
+    listed = await client.get("/transactions", params={"search": "import batch a"})
+    row_a = listed.json()["items"][0]
+    assert row_a["import_log_id"] is not None
+    import_id_a = row_a["import_log_id"]
+
+    # Duplicate hash → skip; existing row must keep the same import_log_id.
+    second = await client.post(
+        "/transactions/bulk",
+        json={
+            "source": "gpb-html",
+            "items": [
+                _txn(
+                    account_id,
+                    category_id=groceries,
+                    description="import batch a again",
+                    date="2026-03-01",
+                    import_hash=digest,
+                ),
+                _txn(
+                    account_id,
+                    category_id=groceries,
+                    description="import batch b",
+                    date="2026-03-02",
+                    import_hash="d" * 64,
+                ),
+            ],
+        },
+    )
+    assert second.status_code == 201
+    assert second.json()["created"] == 1
+    assert second.json()["skipped_duplicates"] == 1
+
+    listed = await client.get("/transactions", params={"page_size": 50})
+    items = {item["description"]: item for item in listed.json()["items"]}
+    assert items["Import batch a"]["import_log_id"] == import_id_a
+    assert items["Import batch b"]["import_log_id"] is not None
+    assert items["Import batch b"]["import_log_id"] != import_id_a
+
+    # Manual create has no import_log_id.
+    manual = await client.post(
+        "/transactions",
+        json=_txn(account_id, category_id=groceries, description="hand entered"),
+    )
+    assert manual.status_code == 201
+    assert manual.json()["import_log_id"] is None
+
+
+async def test_search_by_import_log_id(client: AsyncClient, account_id, categories):
+    groceries = categories["Groceries"]["id"]
+    bulk = await client.post(
+        "/transactions/bulk",
+        json={
+            "source": "alfa-html",
+            "items": [
+                _txn(account_id, category_id=groceries, description="from import", date="2026-05-01"),
+            ],
+        },
+    )
+    assert bulk.status_code == 201
+    listed = await client.get("/transactions", params={"search": "from import"})
+    import_id = listed.json()["items"][0]["import_log_id"]
+    assert import_id is not None
+
+    await client.post(
+        "/transactions",
+        json=_txn(account_id, category_id=groceries, description="other manual", date="2026-05-02"),
+    )
+
+    for query in (f"i{import_id}", f"I{import_id}"):
+        resp = await client.get("/transactions", params={"search": query})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 1
+        assert body["items"][0]["import_log_id"] == import_id
+        assert body["items"][0]["description"] == "From import"
+
+
 async def test_bulk_create_is_all_or_nothing(client: AsyncClient, account_id, categories):
     groceries = categories["Groceries"]["id"]
     salary = categories["Salary"]["id"]
     resp = await client.post(
         "/transactions/bulk",
         json={
+            "source": "csv",
             "items": [
                 _txn(account_id, category_id=groceries, description="good row"),
                 # An expense using an income category — rejected, and it

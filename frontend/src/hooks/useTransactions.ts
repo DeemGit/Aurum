@@ -85,7 +85,8 @@ export function useUpdateTransaction() {
 export function useBulkCreateTransactions() {
   const invalidate = useInvalidateAfterTransactionChange();
   return useMutation({
-    mutationFn: (items: TransactionInput[]) => bulkCreateTransactions(items),
+    mutationFn: ({ items, source }: { items: TransactionInput[]; source: string }) =>
+      bulkCreateTransactions(items, source),
     onSuccess: invalidate,
   });
 }

@@ -56,6 +56,10 @@ class Transaction(Base, TimestampMixin):
     # Transfers that absorbed two import legs keep both digests in transaction_import_hashes;
     # this column still mirrors the source (expense) leg for API/backward compatibility.
     import_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Bulk-import batch this row was created in (NULL for manual entries).
+    import_log_id: Mapped[int | None] = mapped_column(
+        ForeignKey("import_logs.id", ondelete="SET NULL"), nullable=True
+    )
     cashback_category_id: Mapped[int | None] = mapped_column(
         ForeignKey("cashback_categories.id", ondelete="SET NULL"), nullable=True
     )
@@ -78,6 +82,23 @@ class Transaction(Base, TimestampMixin):
     import_hashes: Mapped[list["TransactionImportHash"]] = relationship(
         back_populates="transaction", cascade="all, delete-orphan"
     )
+    import_log: Mapped["ImportLog | None"] = relationship(back_populates="transactions")
+
+
+class ImportLog(Base):
+    """One bulk-import session (CSV / GPB HTML / Alfa HTML / …).
+
+    Newly inserted transactions from that call share this row's id so the UI
+    can show and search by import number.
+    """
+
+    __tablename__ = "import_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    transactions: Mapped[list["Transaction"]] = relationship(back_populates="import_log")
 
 
 class TransactionImportHash(Base):

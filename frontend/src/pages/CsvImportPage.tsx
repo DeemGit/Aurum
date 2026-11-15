@@ -630,7 +630,7 @@ export function CsvImportPage() {
         setCreatedCount(0);
         return;
       }
-      const result = await bulkCreate.mutateAsync(withHashes);
+      const result = await bulkCreate.mutateAsync({ items: withHashes, source: uploadSource });
       setCreatedCount(result.created);
     } catch (error) {
       setImportError(error instanceof ApiError ? error.message : t("transactions.import.importError"));
@@ -743,7 +743,7 @@ export function CsvImportPage() {
               </>
             ) : uploadSource === "gpb-html" ? (
               <>
-                <p className="text-sm text-text-secondary">{t("transactions.import.gpbHtmlHint")}</p>
+                <p className="whitespace-pre-line text-sm text-text-secondary">{t("transactions.import.gpbHtmlHint")}</p>
                 <div>
                   <Label htmlFor="gpb-today">{t("transactions.import.gpbTodayLabel")}</Label>
                   <Input
@@ -777,7 +777,7 @@ export function CsvImportPage() {
               </>
             ) : (
               <>
-                <p className="text-sm text-text-secondary">{t("transactions.import.alfaHtmlHint")}</p>
+                <p className="whitespace-pre-line text-sm text-text-secondary">{t("transactions.import.alfaHtmlHint")}</p>
                 <div>
                   <Label htmlFor="alfa-today">{t("transactions.import.gpbTodayLabel")}</Label>
                   <Input

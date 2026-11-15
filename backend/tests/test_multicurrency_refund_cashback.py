@@ -127,6 +127,7 @@ async def test_bulk_backfills_import_hash_on_existing_row(client: AsyncClient, a
     bulk = await client.post(
         "/transactions/bulk",
         json={
+            "source": "csv",
             "items": [
                 {
                     "account_id": account_id,
@@ -151,6 +152,7 @@ async def test_bulk_backfills_import_hash_on_existing_row(client: AsyncClient, a
     again = await client.post(
         "/transactions/bulk",
         json={
+            "source": "csv",
             "items": [
                 {
                     "account_id": account_id,
@@ -175,6 +177,7 @@ async def test_bulk_skips_duplicate_import_hash(client: AsyncClient, account_id,
     first = await client.post(
         "/transactions/bulk",
         json={
+            "source": "csv",
             "items": [
                 _txn(
                     account_id,
@@ -192,6 +195,7 @@ async def test_bulk_skips_duplicate_import_hash(client: AsyncClient, account_id,
     second = await client.post(
         "/transactions/bulk",
         json={
+            "source": "csv",
             "items": [
                 _txn(
                     account_id,
@@ -322,6 +326,7 @@ async def test_merge_transfer_keeps_both_import_hashes(client: AsyncClient, cate
     reimport = await client.post(
         "/transactions/bulk",
         json={
+            "source": "csv",
             "items": [
                 _txn(
                     a["id"],
@@ -470,6 +475,7 @@ async def test_import_link_candidates_and_bulk_dest_soft_match(client: AsyncClie
     bulk = await client.post(
         "/transactions/bulk",
         json={
+            "source": "csv",
             "items": [
                 _txn(
                     b["id"],
@@ -565,6 +571,7 @@ async def test_import_link_candidates_prefer_expense_without_hash(client: AsyncC
     reimport = await client.post(
         "/transactions/bulk",
         json={
+            "source": "csv",
             "items": [
                 _txn(
                     a["id"],

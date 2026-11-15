@@ -351,6 +351,7 @@ const ru = {
   "transactions.sortAmountAsc": "Сумма: сначала меньше",
 
   "transactions.form.editTitle": "Изменить транзакцию [{{id}}]",
+  "transactions.form.editTitleWithImport": "Изменить транзакцию [{{id}}] {{importBrace}}",
   "transactions.form.newTitle": "Новая транзакция",
   "transactions.form.typeLabel": "Тип",
   "transactions.form.typeExpense": "Расход",
@@ -984,6 +985,7 @@ const en: Record<keyof typeof ru, string> = {
   "transactions.sortAmountAsc": "Amount: low to high",
 
   "transactions.form.editTitle": "Edit transaction [{{id}}]",
+  "transactions.form.editTitleWithImport": "Edit transaction [{{id}}] {{importBrace}}",
   "transactions.form.newTitle": "New transaction",
   "transactions.form.typeLabel": "Type",
   "transactions.form.typeExpense": "Expense",
