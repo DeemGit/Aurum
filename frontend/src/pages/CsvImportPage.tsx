@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Upload } from "lucide-react";
+import { ArrowLeft, Copy, Upload } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -147,6 +147,8 @@ export function CsvImportPage() {
   const [htmlToday, setHtmlToday] = useState(todayLocalIso);
   const [gpbConverting, setGpbConverting] = useState(false);
   const [alfaConverting, setAlfaConverting] = useState(false);
+  // Brief "Copied" feedback after writing the Chrome DevTools snippet.
+  const [copiedSource, setCopiedSource] = useState<"gpb" | "alfa" | null>(null);
   const [convertedCsv, setConvertedCsv] = useState<string | null>(null);
   const [selectedIndexes, setSelectedIndexes] = useState<Set<number>>(() => new Set());
   const selectAllRef = useRef<HTMLInputElement>(null);
@@ -558,6 +560,22 @@ export function CsvImportPage() {
     }
   }
 
+  async function handleCopyConsoleSnippet(source: "gpb" | "alfa") {
+    const snippet =
+      source === "gpb"
+        ? t("transactions.import.gpbConsoleSnippet")
+        : t("transactions.import.alfaConsoleSnippet");
+    try {
+      await navigator.clipboard.writeText(snippet);
+      setCopiedSource(source);
+      window.setTimeout(() => {
+        setCopiedSource((current) => (current === source ? null : current));
+      }, 1500);
+    } catch {
+      // Clipboard can fail without a secure context / permission — leave button label unchanged.
+    }
+  }
+
   function downloadConvertedCsv() {
     if (!convertedCsv) return;
     const blob = new Blob([convertedCsv], { type: "text/csv;charset=utf-8" });
@@ -743,7 +761,20 @@ export function CsvImportPage() {
               </>
             ) : uploadSource === "gpb-html" ? (
               <>
-                <p className="whitespace-pre-line text-sm text-text-secondary">{t("transactions.import.gpbHtmlHint")}</p>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <p className="text-sm text-text-secondary">{t("transactions.import.gpbHtmlHint")}</p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="shrink-0 self-start"
+                    onClick={() => void handleCopyConsoleSnippet("gpb")}
+                  >
+                    <Copy size={16} />
+                    {copiedSource === "gpb"
+                      ? t("transactions.import.consoleCopied")
+                      : t("transactions.import.copyConsoleCommand")}
+                  </Button>
+                </div>
                 <div>
                   <Label htmlFor="gpb-today">{t("transactions.import.gpbTodayLabel")}</Label>
                   <Input
@@ -777,7 +808,20 @@ export function CsvImportPage() {
               </>
             ) : (
               <>
-                <p className="whitespace-pre-line text-sm text-text-secondary">{t("transactions.import.alfaHtmlHint")}</p>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <p className="text-sm text-text-secondary">{t("transactions.import.alfaHtmlHint")}</p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="shrink-0 self-start"
+                    onClick={() => void handleCopyConsoleSnippet("alfa")}
+                  >
+                    <Copy size={16} />
+                    {copiedSource === "alfa"
+                      ? t("transactions.import.consoleCopied")
+                      : t("transactions.import.copyConsoleCommand")}
+                  </Button>
+                </div>
                 <div>
                   <Label htmlFor="alfa-today">{t("transactions.import.gpbTodayLabel")}</Label>
                   <Input
