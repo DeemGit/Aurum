@@ -15,8 +15,11 @@ import type { Transaction } from "@/types";
 interface CategoryTransactionsCardProps {
   year: number;
   month: number;
-  categoryId: number;
+  /** null = dashboard Other / Прочее slice. */
+  categoryId: number | null;
   categoryName: string;
+  /** Top chart category ids — used when drilling into Other. */
+  topCategoryIds?: number[];
   onClear: () => void;
 }
 
@@ -25,24 +28,40 @@ export function CategoryTransactionsCard({
   month,
   categoryId,
   categoryName,
+  topCategoryIds = [],
   onClear,
 }: CategoryTransactionsCardProps) {
   const { t } = useTranslation();
   const { data: settings } = useAppSettings();
   const excludeTagIds = (settings?.dashboard_excluded_tags ?? []).map((tag) => tag.id);
+  const isOther = categoryId === null;
+  const titleName = isOther || categoryName === "Other"
+    ? t("dashboard.otherCategory")
+    : translateCategoryName(categoryName);
   const { data, isLoading } = useTransactions({
     year,
     month,
-    category_id: categoryId,
-    include_children: true,
     type: "expense",
     page: 1,
     page_size: 50,
     exclude_tag_ids: excludeTagIds.length ? excludeTagIds : undefined,
+    ...(isOther
+      ? {
+          dashboard_other: true,
+          exclude_category_ids: topCategoryIds.length ? topCategoryIds : undefined,
+        }
+      : {
+          category_id: categoryId,
+          include_children: true,
+        }),
   });
   const { data: categories } = useCategories();
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+
+  const allLink = isOther
+    ? `/transactions?year=${year}&month=${month}`
+    : `/transactions?year=${year}&month=${month}&category_id=${categoryId}`;
 
   return (
     <>
@@ -50,17 +69,14 @@ export function CategoryTransactionsCard({
         <CardHeader>
           <CardTitle>
             {t("dashboard.categoryTransactionsTitle", {
-              name: translateCategoryName(categoryName),
+              name: titleName,
             })}
           </CardTitle>
           <div className="flex shrink-0 items-center gap-3">
             <Button type="button" variant="ghost" className="h-auto px-2 py-1 text-xs" onClick={onClear}>
               {t("dashboard.categoryTransactionsClear")}
             </Button>
-            <Link
-              to={`/transactions?year=${year}&month=${month}&category_id=${categoryId}`}
-              className="text-xs font-medium text-series-1 hover:underline"
-            >
+            <Link to={allLink} className="text-xs font-medium text-series-1 hover:underline">
               {t("dashboard.allTransactionsLink")}
             </Link>
           </div>

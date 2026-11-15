@@ -12,16 +12,31 @@ import type { CategoryBreakdownItem } from "@/types";
 
 interface SpendingByCategoryCardProps {
   items: CategoryBreakdownItem[];
+  /** Selected top-level category id; omit when Other is selected. */
   selectedCategoryId?: number | null;
+  /** True when the synthetic Other / Прочее slice is selected. */
+  otherSelected?: boolean;
   onSelectCategory?: (item: CategoryBreakdownItem) => void;
 }
 
-function DonutTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: CategoryBreakdownItem }> }) {
+function sliceLabel(name: string, otherLabel: string): string {
+  return name === "Other" ? otherLabel : translateCategoryName(name);
+}
+
+function DonutTooltip({
+  active,
+  payload,
+  otherLabel,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: CategoryBreakdownItem }>;
+  otherLabel: string;
+}) {
   if (!active || !payload?.length) return null;
   const item = payload[0].payload;
   return (
     <div className="rounded-lg border border-border bg-surface-1 px-3 py-2 text-sm shadow-md">
-      <p className="font-medium text-text-primary">{translateCategoryName(item.name)}</p>
+      <p className="font-medium text-text-primary">{sliceLabel(item.name, otherLabel)}</p>
       <p className="text-text-secondary">
         {formatCurrency(item.amount)} · {item.percent.toFixed(1)}%
       </p>
@@ -32,9 +47,11 @@ function DonutTooltip({ active, payload }: { active?: boolean; payload?: Array<{
 export function SpendingByCategoryCard({
   items,
   selectedCategoryId = null,
+  otherSelected = false,
   onSelectCategory,
 }: SpendingByCategoryCardProps) {
   const { t } = useTranslation();
+  const otherLabel = t("dashboard.otherCategory");
   // The breakdown lives in a modal, not expanded inline — a category with
   // many subcategories (or many split purchases) would otherwise push this
   // row taller than the fixed-height donut next to it, throwing the
@@ -44,10 +61,16 @@ export function SpendingByCategoryCard({
   // Recharts needs a numeric dataKey — API amounts arrive as strings (Decimal
   // is serialized as string to avoid float precision loss).
   const chartData = items.map((item) => ({ ...item, amount: Number(item.amount) }));
+  const somethingSelected = otherSelected || selectedCategoryId != null;
 
   function selectIfPossible(item: CategoryBreakdownItem) {
-    if (item.category_id === null || !onSelectCategory) return;
+    if (!onSelectCategory) return;
     onSelectCategory(item);
+  }
+
+  function isSelected(item: CategoryBreakdownItem): boolean {
+    if (item.category_id === null) return otherSelected;
+    return selectedCategoryId != null && item.category_id === selectedCategoryId;
   }
 
   return (
@@ -82,14 +105,12 @@ export function SpendingByCategoryCard({
                       <Cell
                         key={item.category_id ?? "other"}
                         fill={item.color}
-                        className={item.category_id !== null ? "cursor-pointer" : undefined}
-                        opacity={
-                          selectedCategoryId != null && item.category_id !== selectedCategoryId ? 0.45 : 1
-                        }
+                        className={onSelectCategory ? "cursor-pointer" : undefined}
+                        opacity={somethingSelected && !isSelected(item) ? 0.45 : 1}
                       />
                     ))}
                   </Pie>
-                  <Tooltip content={<DonutTooltip />} />
+                  <Tooltip content={<DonutTooltip otherLabel={otherLabel} />} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -98,8 +119,8 @@ export function SpendingByCategoryCard({
               {items.map((item) => {
                 const Icon = getCategoryIcon(item.icon);
                 const hasChildren = item.children.length > 0;
-                const selectable = item.category_id !== null && Boolean(onSelectCategory);
-                const selected = item.category_id !== null && item.category_id === selectedCategoryId;
+                const selectable = Boolean(onSelectCategory);
+                const selected = isSelected(item);
                 return (
                   <li
                     key={item.category_id ?? "other"}
@@ -136,11 +157,11 @@ export function SpendingByCategoryCard({
                         className="min-w-0 flex-1 truncate text-left text-sm text-text-primary underline-offset-2 hover:underline"
                         onClick={() => selectIfPossible(item)}
                       >
-                        {translateCategoryName(item.name)}
+                        {sliceLabel(item.name, otherLabel)}
                       </button>
                     ) : (
                       <span className="min-w-0 flex-1 truncate text-sm text-text-primary">
-                        {translateCategoryName(item.name)}
+                        {sliceLabel(item.name, otherLabel)}
                       </span>
                     )}
                     <span className="shrink-0 text-sm font-medium tabular-nums text-text-primary">

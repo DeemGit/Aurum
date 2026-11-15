@@ -82,6 +82,13 @@ async def get_dashboard_summary(session: AsyncSession, year: int, month: int) ->
     )
 
     top_rows, rest_rows = rows[:MAX_CHART_SLICES], rows[MAX_CHART_SLICES:]
+    # Categories beyond the chart cap fold into Other; uncategorized spend is
+    # already in `spent` but never appears in the rollup — add it to Other too.
+    categorized_total = sum((row.amount for row in rows), Decimal("0"))
+    uncategorized = spent - categorized_total
+    if uncategorized < 0:
+        uncategorized = Decimal("0")
+    other_amount = sum((row.amount for row in rest_rows), Decimal("0")) + uncategorized
 
     def _percent(amount: Decimal) -> float:
         return float(amount / spent * 100) if spent else 0.0
@@ -101,8 +108,7 @@ async def get_dashboard_summary(session: AsyncSession, year: int, month: int) ->
         for row in top_rows
     ]
 
-    if rest_rows:
-        other_amount = sum((row.amount for row in rest_rows), Decimal("0"))
+    if other_amount > 0:
         spending_by_category.append(
             CategoryBreakdownItem(
                 category_id=None, name="Other", color=OTHER_SLICE_COLOR, icon="more-horizontal",

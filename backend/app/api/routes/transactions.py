@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -149,6 +149,10 @@ async def list_transactions(
     account_id: int | None = None,
     category_id: int | None = None,
     include_children: bool = Query(default=False),
+    # Dashboard "Other" drill-down: expenses outside the chart's top categories
+    # (ids passed as exclude_category_ids) plus uncategorized ones.
+    dashboard_other: bool = Query(default=False),
+    exclude_category_ids: list[int] | None = Query(default=None),
     tag_id: int | None = None,
     exclude_tag_ids: list[int] | None = Query(default=None),
     type: TransactionType | None = None,
@@ -181,7 +185,40 @@ async def list_transactions(
         )
         stmt = stmt.where(account_filter)
         count_stmt = count_stmt.where(account_filter)
-    if category_id is not None:
+    if dashboard_other:
+        # Inverse of a top-level category drill-down: not in the chart's top
+        # slices (or their children), or fully uncategorized.
+        blocked: set[int] = set(exclude_category_ids or [])
+        if blocked:
+            child_ids = (
+                await session.execute(select(Category.id).where(Category.parent_id.in_(blocked)))
+            ).scalars().all()
+            blocked.update(child_ids)
+        if blocked:
+            other_filter = or_(
+                # Plain uncategorized (no category, no split lines).
+                and_(Transaction.category_id.is_(None), ~Transaction.splits.any()),
+                # Plain expense filed outside the top chart categories.
+                and_(Transaction.category_id.is_not(None), ~Transaction.category_id.in_(blocked)),
+                # Split that touches at least one non-top / null category line.
+                Transaction.splits.any(
+                    or_(
+                        TransactionSplit.category_id.is_(None),
+                        ~TransactionSplit.category_id.in_(blocked),
+                    )
+                ),
+            )
+        else:
+            # No top categories on the chart — Other is everything uncategorized
+            # plus any categorized spend (all of it is "outside" an empty top).
+            other_filter = or_(
+                and_(Transaction.category_id.is_(None), ~Transaction.splits.any()),
+                Transaction.category_id.is_not(None),
+                Transaction.splits.any(),
+            )
+        stmt = stmt.where(other_filter)
+        count_stmt = count_stmt.where(other_filter)
+    elif category_id is not None:
         # A split transaction has category_id=NULL on the row itself — the
         # category lives on its split lines instead, so filtering by exact
         # column match alone would silently drop it from a category filter

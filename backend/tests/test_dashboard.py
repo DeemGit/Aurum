@@ -182,3 +182,56 @@ async def test_a_single_category_slice_has_no_children_breakdown(client: AsyncCl
     breakdown = {row["name"]: row for row in resp.json()["spending_by_category"]}
 
     assert breakdown["Groceries"]["children"] == []
+
+
+async def test_uncategorized_expense_lands_in_other_slice(client: AsyncClient, account_id, categories):
+    groceries = categories["Groceries"]["id"]
+    await client.post(
+        "/transactions", json=_txn(account_id, amount="40.00", category_id=groceries, date="2026-08-01")
+    )
+    uncategorized = await client.post(
+        "/transactions",
+        json=_txn(account_id, amount="15.00", category_id=None, date="2026-08-02", description="no cat"),
+    )
+    assert uncategorized.status_code == 201
+
+    resp = await client.get("/dashboard/summary", params={"year": 2026, "month": 8})
+    body = resp.json()
+    assert money(body["spent"]) == Decimal("55.00")
+    other = next(row for row in body["spending_by_category"] if row["category_id"] is None)
+    assert other["name"] == "Other"
+    assert money(other["amount"]) == Decimal("15.00")
+
+
+async def test_list_dashboard_other_excludes_top_categories_includes_uncategorized(
+    client: AsyncClient, account_id, categories
+):
+    groceries = categories["Groceries"]["id"]
+    dining = categories["Dining Out"]["id"]
+    in_top = await client.post(
+        "/transactions", json=_txn(account_id, amount="20.00", category_id=groceries, date="2026-08-01")
+    )
+    outside = await client.post(
+        "/transactions", json=_txn(account_id, amount="30.00", category_id=dining, date="2026-08-02")
+    )
+    bare = await client.post(
+        "/transactions",
+        json=_txn(account_id, amount="10.00", category_id=None, date="2026-08-03", description="bare"),
+    )
+    assert in_top.status_code == 201 and outside.status_code == 201 and bare.status_code == 201
+
+    listed = await client.get(
+        "/transactions",
+        params={
+            "year": 2026,
+            "month": 8,
+            "type": "expense",
+            "dashboard_other": True,
+            "exclude_category_ids": [groceries],
+        },
+    )
+    assert listed.status_code == 200
+    ids = {item["id"] for item in listed.json()["items"]}
+    assert in_top.json()["id"] not in ids
+    assert outside.json()["id"] in ids
+    assert bare.json()["id"] in ids

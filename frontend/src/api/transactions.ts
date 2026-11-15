@@ -12,6 +12,10 @@ export interface TransactionFilters {
   category_id?: number;
   /** When true with category_id, also match direct subcategories (dashboard drill-down). */
   include_children?: boolean;
+  /** Dashboard "Other" slice: expenses outside top chart categories + uncategorized. */
+  dashboard_other?: boolean;
+  /** Top-level category ids shown on the chart (used with dashboard_other). */
+  exclude_category_ids?: number[];
   tag_id?: number;
   /** Omit transactions that carry any of these tags (dashboard lists). */
   exclude_tag_ids?: number[];

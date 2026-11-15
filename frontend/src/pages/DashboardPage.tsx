@@ -23,28 +23,35 @@ function formatPercent(value: number): string {
   return `${sign}${value.toFixed(0)}%`;
 }
 
+/** null id = dashboard "Other" / Прочее slice. */
+type SelectedCategory = { id: number | null; name: string };
+
 export function DashboardPage() {
   const { t } = useTranslation();
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
-  const [selectedCategory, setSelectedCategory] = useState<{ id: number; name: string } | null>(
-    null,
-  );
+  const [selectedCategory, setSelectedCategory] = useState<SelectedCategory | null>(null);
   const { data: years } = useTransactionYears();
 
   const { data, isLoading, isError } = useDashboardSummary(year, month);
   const rate = data ? savingsRate(Number(data.real_income), Number(data.net)) : null;
+  const topCategoryIds = (data?.spending_by_category ?? [])
+    .map((item) => item.category_id)
+    .filter((id): id is number => id !== null);
 
   useEffect(() => {
     setSelectedCategory(null);
   }, [year, month]);
 
   function handleSelectCategory(item: CategoryBreakdownItem) {
-    if (item.category_id === null) return;
-    setSelectedCategory((prev) =>
-      prev?.id === item.category_id ? null : { id: item.category_id!, name: item.name },
-    );
+    setSelectedCategory((prev) => {
+      const same =
+        prev != null &&
+        prev.id === item.category_id &&
+        (item.category_id !== null || prev.name === item.name);
+      return same ? null : { id: item.category_id, name: item.name };
+    });
   }
 
   return (
@@ -94,7 +101,8 @@ export function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
         <SpendingByCategoryCard
           items={data?.spending_by_category ?? []}
-          selectedCategoryId={selectedCategory?.id ?? null}
+          selectedCategoryId={selectedCategory ? selectedCategory.id : undefined}
+          otherSelected={selectedCategory?.id === null}
           onSelectCategory={handleSelectCategory}
         />
         <RecentTransactionsCard year={year} month={month} />
@@ -106,6 +114,7 @@ export function DashboardPage() {
           month={month}
           categoryId={selectedCategory.id}
           categoryName={selectedCategory.name}
+          topCategoryIds={topCategoryIds}
           onClear={() => setSelectedCategory(null)}
         />
       )}
