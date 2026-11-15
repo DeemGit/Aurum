@@ -62,7 +62,10 @@ _ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})")
 
 @dataclass
 class AlfaOperation:
-    operation_date: str  # DD.MM.YYYY
+    # Synthetic wall-clock within the day (00:00:00, 00:00:01, …) so same-day
+    # rows with identical merchant/amount get distinct import_hash digests —
+    # Alfa HTML has no per-operation time.
+    operation_date: str  # DD.MM.YYYY HH:MM:SS
     amount: str  # absolute, dot-decimal
     direction: str  # Списание | Пополнение
     merchant: str
@@ -201,6 +204,15 @@ def _format_date(day: date) -> str:
     return f"{day.day:02d}.{day.month:02d}.{day.year}"
 
 
+def _format_datetime(day: date, second_of_day: int) -> str:
+    """Date plus synthetic time from ordinal seconds within that calendar day."""
+    capped = min(max(second_of_day, 0), 24 * 60 * 60 - 1)
+    hh = capped // 3600
+    mm = (capped % 3600) // 60
+    ss = capped % 60
+    return f"{_format_date(day)} {hh:02d}:{mm:02d}:{ss:02d}"
+
+
 def _parse_signed_amount(raw: str) -> tuple[str, str] | None:
     """Return (absolute_dot_decimal, Списание|Пополнение) or None."""
     cleaned = (
@@ -255,7 +267,7 @@ def _extract_bonus(cell: _Node) -> str:
     return text
 
 
-def _extract_operation(cell: _Node, day: date) -> AlfaOperation | None:
+def _extract_operation(cell: _Node, day: date, *, second_of_day: int) -> AlfaOperation | None:
     titles = _find_descendants(cell, test_id="title-text_content")
     merchant = _all_text(titles[0]).strip() if titles else ""
     if not merchant:
@@ -277,7 +289,7 @@ def _extract_operation(cell: _Node, day: date) -> AlfaOperation | None:
     comment = _all_text(footers[0]).strip() if footers else ""
 
     return AlfaOperation(
-        operation_date=_format_date(day),
+        operation_date=_format_datetime(day, second_of_day),
         amount=amount,
         direction=direction,
         merchant=merchant,
@@ -313,6 +325,8 @@ def parse_alfa_html(html: str, *, today: date) -> list[AlfaOperation]:
     builder.close()
 
     current_day: date | None = None
+    # Per-day ordinal → synthetic seconds so identical same-day rows stay unique.
+    day_seconds: dict[date, int] = {}
     operations: list[AlfaOperation] = []
 
     for node in _walk(builder.root):
@@ -336,8 +350,10 @@ def parse_alfa_html(html: str, *, today: date) -> list[AlfaOperation]:
             continue
         if current_day is None:
             continue
-        op = _extract_operation(node, current_day)
+        second = day_seconds.get(current_day, 0)
+        op = _extract_operation(node, current_day, second_of_day=second)
         if op is not None:
+            day_seconds[current_day] = second + 1
             operations.append(op)
 
     return operations

@@ -36,18 +36,21 @@ def test_parse_alfa_html_skips_banner_keeps_bonus_and_footer():
     ]
     assert all("расходы" not in op.merchant.casefold() for op in ops)
 
-    assert ops[0].operation_date == "06.11.2026"
+    # Same-day ops get synthetic seconds so import_hash stays unique.
+    assert ops[0].operation_date == "06.11.2026 00:00:00"
+    assert ops[1].operation_date == "06.11.2026 00:00:01"
     assert ops[0].amount == "3800.00"
     assert ops[0].direction == "Списание"
     assert ops[0].category == "Переводы · СБП · Сбербанк"
     assert ops[0].comment == "Перевод денежных средств"
 
-    assert ops[2].operation_date == "05.11.2026"
+    assert ops[2].operation_date == "05.11.2026 00:00:00"
     assert ops[2].amount == "7458.75"
     assert ops[2].direction == "Пополнение"
     assert ops[2].category == "Пополнения"
 
-    assert ops[3].operation_date == "04.11.2026"
+    assert ops[3].operation_date == "04.11.2026 00:00:00"
+    assert ops[4].operation_date == "04.11.2026 00:00:01"
     assert ops[3].amount == "5950.00"
     assert ops[3].direction == "Списание"
     assert ops[3].bonus_value == "+767"
@@ -95,7 +98,37 @@ def test_fallback_labels_without_data_date():
     """
     ops = parse_alfa_html(html, today=TODAY)
     assert len(ops) == 2
-    assert ops[0].operation_date == "06.11.2026"
+    assert ops[0].operation_date == "06.11.2026 00:00:00"
     assert ops[0].direction == "Списание"
-    assert ops[1].operation_date == "05.11.2026"
+    assert ops[1].operation_date == "05.11.2026 00:00:00"
     assert ops[1].direction == "Пополнение"
+
+
+def test_same_day_duplicate_merchant_gets_distinct_times():
+    """Without synthetic seconds, identical same-day rows would share import_hash."""
+    html = """
+    <section data-test-id="operations-history">
+      <div data-date="2026-11-06T12:00:00.000+0300">
+        <button data-test-id="operation-cell">
+          <div data-test-id="title-text_content">Cafe</div>
+          <span data-test-id="transaction-category-name">Кафе</span>
+          <div data-test-id="transaction-status">-<span>100<span>,00 ₽</span></span></div>
+        </button>
+        <button data-test-id="operation-cell">
+          <div data-test-id="title-text_content">Cafe</div>
+          <span data-test-id="transaction-category-name">Кафе</span>
+          <div data-test-id="transaction-status">-<span>100<span>,00 ₽</span></span></div>
+        </button>
+      </div>
+    </section>
+    """
+    ops = parse_alfa_html(html, today=TODAY)
+    assert len(ops) == 2
+    assert ops[0].merchant == ops[1].merchant == "Cafe"
+    assert ops[0].amount == ops[1].amount == "100.00"
+    assert ops[0].operation_date == "06.11.2026 00:00:00"
+    assert ops[1].operation_date == "06.11.2026 00:00:01"
+    csv_text, count = convert_alfa_html_to_csv(html, today=TODAY)
+    assert count == 2
+    assert "06.11.2026 00:00:00" in csv_text
+    assert "06.11.2026 00:00:01" in csv_text
