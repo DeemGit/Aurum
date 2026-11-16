@@ -50,6 +50,7 @@ from app.services.transaction_domain import (
     TRANSFER_MATCH_WINDOW,
     attach_import_hash,
     backfill_import_hash,
+    delete_transaction_with_merge_restore,
     ensure_refund_target,
     find_transfer_match_candidates,
     merge_into_transfer,
@@ -65,6 +66,7 @@ _EAGER = (
     selectinload(Transaction.cashback_category).selectinload(CashbackCategory.account),
     selectinload(Transaction.splits).selectinload(TransactionSplit.category),
     selectinload(Transaction.import_hashes),
+    selectinload(Transaction.merge_archive),
 )
 
 
@@ -828,5 +830,5 @@ async def delete_transaction(transaction_id: int, session: AsyncSession = Depend
     transaction = await session.get(Transaction, transaction_id)
     if transaction is None:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    await session.delete(transaction)
-    await session.commit()
+    # Merged transfers restore archived expense/income legs; others hard-delete.
+    await delete_transaction_with_merge_restore(session, transaction)

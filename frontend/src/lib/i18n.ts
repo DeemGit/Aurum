@@ -349,6 +349,8 @@ const ru = {
   "transactions.searchNoneFound": "Ничего не найдено. Попробуйте другой запрос.",
   "transactions.jumpToMonth": "Перейти к этому месяцу",
   "transactions.confirmDelete": "Удалить транзакцию «{{description}}»?",
+  "transactions.confirmDeleteTransferNoArchive":
+    "История объединения не найдена. Удалить перевод «{{description}}» без восстановления расходов/доходов?",
   "transactions.transferSuffix": "→ перевод",
   "transactions.sortDateDesc": "Сначала новые",
   "transactions.sortAmountDesc": "Сумма: сначала больше",
@@ -987,6 +989,8 @@ const en: Record<keyof typeof ru, string> = {
   "transactions.searchNoneFound": "Nothing found. Try a different search.",
   "transactions.jumpToMonth": "Jump to this month",
   "transactions.confirmDelete": "Delete transaction “{{description}}”?",
+  "transactions.confirmDeleteTransferNoArchive":
+    "Merge history not found. Delete transfer “{{description}}” without restoring the expense/income legs?",
   "transactions.transferSuffix": "→ transfer",
   "transactions.sortDateDesc": "Newest first",
   "transactions.sortAmountDesc": "Amount: high to low",

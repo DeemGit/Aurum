@@ -1,18 +1,33 @@
 """Shared write-path helpers for transfers, refunds, import dedupe and merge."""
+from __future__ import annotations
+
+from datetime import date as date_
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.enums import TransactionType
-from app.models.transaction import Transaction, TransactionImportHash
+from app.models.tag import Tag
+from app.models.transaction import (
+    Transaction,
+    TransactionImportHash,
+    TransactionSplit,
+    TransferMergeArchive,
+)
 from app.schemas.transaction import normalize_occurred_at
 
 
 TRANSFER_MATCH_WINDOW = timedelta(days=2)
+
+_LEG_LOAD = (
+    selectinload(Transaction.tags),
+    selectinload(Transaction.splits),
+    selectinload(Transaction.import_hashes),
+)
 
 
 def _as_aware_utc(value: datetime) -> datetime:
@@ -131,6 +146,138 @@ async def find_transfer_match_candidates(
     return ranked
 
 
+def _serialize_leg(tx: Transaction) -> dict:
+    """JSON-serializable snapshot of a leg for transfer_merge_archives."""
+    return {
+        "id": tx.id,
+        "account_id": tx.account_id,
+        "category_id": tx.category_id,
+        "transfer_account_id": tx.transfer_account_id,
+        "refund_of_transaction_id": tx.refund_of_transaction_id,
+        "type": tx.type.value if isinstance(tx.type, TransactionType) else tx.type,
+        "amount": str(tx.amount),
+        "transfer_amount": str(tx.transfer_amount) if tx.transfer_amount is not None else None,
+        "exchange_rate": str(tx.exchange_rate) if tx.exchange_rate is not None else None,
+        "fee_amount": str(tx.fee_amount or Decimal("0")),
+        "description": tx.description,
+        "merchant": tx.merchant,
+        "notes": tx.notes,
+        "date": tx.date.isoformat(),
+        "occurred_at": tx.occurred_at.isoformat(),
+        "import_hash": tx.import_hash,
+        "import_log_id": tx.import_log_id,
+        "cashback_category_id": tx.cashback_category_id,
+        "cashback_amount": str(tx.cashback_amount) if tx.cashback_amount is not None else None,
+        "is_cashback": bool(tx.is_cashback),
+        "tag_ids": [tag.id for tag in tx.tags],
+        "splits": [
+            {
+                "id": split.id,
+                "category_id": split.category_id,
+                "amount": str(split.amount),
+                "note": split.note,
+            }
+            for split in tx.splits
+        ],
+        "import_hashes": [
+            {"account_id": row.account_id, "import_hash": row.import_hash} for row in tx.import_hashes
+        ],
+        "created_at": tx.created_at.isoformat() if tx.created_at is not None else None,
+        "updated_at": tx.updated_at.isoformat() if tx.updated_at is not None else None,
+    }
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+async def _restore_leg_from_payload(session: AsyncSession, payload: dict, tags_by_id: dict[int, Tag]) -> Transaction:
+    """Re-insert a snapshotted leg with its original id and related rows."""
+    leg_id = int(payload["id"])
+    tag_ids = [int(x) for x in payload.get("tag_ids") or []]
+    missing = [tid for tid in tag_ids if tid not in tags_by_id]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Cannot restore merge leg: unknown tag id(s) {missing}")
+
+    occurred_at = _parse_datetime(payload["occurred_at"])
+    assert occurred_at is not None
+    created_at = _parse_datetime(payload.get("created_at"))
+    updated_at = _parse_datetime(payload.get("updated_at"))
+
+    transfer_amount = payload.get("transfer_amount")
+    exchange_rate = payload.get("exchange_rate")
+    cashback_amount = payload.get("cashback_amount")
+    fee_raw = payload.get("fee_amount") or "0"
+
+    transaction = Transaction(
+        id=leg_id,
+        account_id=int(payload["account_id"]),
+        category_id=payload.get("category_id"),
+        transfer_account_id=payload.get("transfer_account_id"),
+        refund_of_transaction_id=payload.get("refund_of_transaction_id"),
+        type=TransactionType(payload["type"]),
+        amount=Decimal(str(payload["amount"])),
+        transfer_amount=Decimal(str(transfer_amount)) if transfer_amount is not None else None,
+        exchange_rate=Decimal(str(exchange_rate)) if exchange_rate is not None else None,
+        fee_amount=Decimal(str(fee_raw)),
+        description=payload["description"],
+        merchant=payload.get("merchant"),
+        notes=payload.get("notes"),
+        date=date_.fromisoformat(payload["date"]),
+        occurred_at=occurred_at,
+        import_hash=payload.get("import_hash"),
+        import_log_id=payload.get("import_log_id"),
+        cashback_category_id=payload.get("cashback_category_id"),
+        cashback_amount=Decimal(str(cashback_amount)) if cashback_amount is not None else None,
+        is_cashback=bool(payload.get("is_cashback", False)),
+        tags=[],
+    )
+    if created_at is not None:
+        transaction.created_at = created_at
+    if updated_at is not None:
+        transaction.updated_at = updated_at
+
+    for split in payload.get("splits") or []:
+        split_kwargs: dict = {
+            "category_id": split.get("category_id"),
+            "amount": Decimal(str(split["amount"])),
+            "note": split.get("note"),
+        }
+        if split.get("id") is not None:
+            split_kwargs["id"] = int(split["id"])
+        transaction.splits.append(TransactionSplit(**split_kwargs))
+    for row in payload.get("import_hashes") or []:
+        transaction.import_hashes.append(
+            TransactionImportHash(account_id=int(row["account_id"]), import_hash=row["import_hash"])
+        )
+    # If hashes list empty but legacy column set, rebuild the single row.
+    if not transaction.import_hashes and transaction.import_hash:
+        transaction.import_hashes.append(
+            TransactionImportHash(account_id=transaction.account_id, import_hash=transaction.import_hash)
+        )
+
+    transaction.tags = [tags_by_id[tid] for tid in tag_ids]
+    session.add(transaction)
+    return transaction
+
+
+async def _reset_transactions_sequence(session: AsyncSession) -> None:
+    await session.execute(
+        text(
+            "SELECT setval(pg_get_serial_sequence('transactions', 'id'), "
+            "COALESCE((SELECT MAX(id) FROM transactions), 1))"
+        )
+    )
+    await session.execute(
+        text(
+            "SELECT setval(pg_get_serial_sequence('transaction_splits', 'id'), "
+            "COALESCE((SELECT MAX(id) FROM transaction_splits), 1))"
+        )
+    )
+
+
 async def merge_into_transfer(
     session: AsyncSession,
     *,
@@ -150,7 +297,30 @@ async def merge_into_transfer(
     expense = source if source.type == TransactionType.EXPENSE else destination
     income = destination if source.type == TransactionType.EXPENSE else source
 
-    # Snapshot before delete; CASCADE drops hash rows with the legs, and flush may expire attrs.
+    # Reload with children so the archive snapshot is complete.
+    expense = (
+        await session.execute(select(Transaction).options(*_LEG_LOAD).where(Transaction.id == expense.id))
+    ).scalar_one()
+    income = (
+        await session.execute(select(Transaction).options(*_LEG_LOAD).where(Transaction.id == income.id))
+    ).scalar_one()
+
+    refunds_on_expense = (
+        await session.execute(
+            select(func.count())
+            .select_from(Transaction)
+            .where(Transaction.refund_of_transaction_id == expense.id)
+        )
+    ).scalar_one()
+    if refunds_on_expense:
+        raise HTTPException(
+            status_code=400,
+            detail="cannot merge an expense that has refunds; remove refunds first",
+        )
+
+    expense_payload = _serialize_leg(expense)
+    income_payload = _serialize_leg(income)
+
     expense_hash = expense.import_hash
     income_hash = income.import_hash
     expense_account_id = expense.account_id
@@ -202,5 +372,49 @@ async def merge_into_transfer(
         )
 
     session.add(transfer)
+    await session.flush()
+
+    session.add(
+        TransferMergeArchive(
+            transfer_id=transfer.id,
+            expense_payload=expense_payload,
+            income_payload=income_payload,
+        )
+    )
     await session.commit()
     return transfer
+
+
+async def delete_transaction_with_merge_restore(session: AsyncSession, transaction: Transaction) -> None:
+    """Delete a transaction; if it is a merged transfer, restore archived legs first."""
+    archive: TransferMergeArchive | None = None
+    if transaction.type == TransactionType.TRANSFER:
+        archive = (
+            await session.execute(
+                select(TransferMergeArchive).where(TransferMergeArchive.transfer_id == transaction.id)
+            )
+        ).scalar_one_or_none()
+
+    if archive is None:
+        await session.delete(transaction)
+        await session.commit()
+        return
+
+    expense_payload = dict(archive.expense_payload)
+    income_payload = dict(archive.income_payload)
+    tag_ids = set(expense_payload.get("tag_ids") or []) | set(income_payload.get("tag_ids") or [])
+    tags_by_id: dict[int, Tag] = {}
+    if tag_ids:
+        rows = (await session.execute(select(Tag).where(Tag.id.in_(tag_ids)))).scalars().all()
+        tags_by_id = {tag.id: tag for tag in rows}
+
+    # Drop archive then transfer so RESTRICT FK and unique hashes are free.
+    await session.delete(archive)
+    await session.delete(transaction)
+    await session.flush()
+
+    await _restore_leg_from_payload(session, expense_payload, tags_by_id)
+    await _restore_leg_from_payload(session, income_payload, tags_by_id)
+    await session.flush()
+    await _reset_transactions_sequence(session)
+    await session.commit()

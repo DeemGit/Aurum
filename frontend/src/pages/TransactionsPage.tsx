@@ -111,7 +111,11 @@ export function TransactionsPage() {
   }
 
   function handleDelete(transaction: Transaction) {
-    if (window.confirm(t("transactions.confirmDelete", { description: transaction.description }))) {
+    const message =
+      transaction.type === "transfer" && !transaction.has_merge_archive
+        ? t("transactions.confirmDeleteTransferNoArchive", { description: transaction.description })
+        : t("transactions.confirmDelete", { description: transaction.description });
+    if (window.confirm(message)) {
       deleteTransaction.mutate(transaction.id);
     }
   }

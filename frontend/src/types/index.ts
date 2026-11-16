@@ -118,6 +118,8 @@ export interface Transaction {
   import_hashes?: ImportHash[];
   /** Bulk-import batch id when the row was created via CSV/HTML import. */
   import_log_id: number | null;
+  /** True when delete will restore expense/income legs from a merge archive. */
+  has_merge_archive?: boolean;
   cashback_category_id: number | null;
   cashback_amount: string | null;
   is_cashback: boolean;

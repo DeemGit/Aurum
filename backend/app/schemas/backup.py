@@ -94,6 +94,18 @@ class ImportLogBackup(BaseModel):
     source: str
 
 
+class TransferMergeArchiveBackup(BaseModel):
+    """Expense/income legs snapshotted when a transfer was created via merge."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    transfer_id: int
+    expense_payload: dict
+    income_payload: dict
+    created_at: datetime
+
+
 class TransactionSplitBackup(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -261,6 +273,8 @@ class BackupPayload(BaseModel):
     # Defaulted so a backup exported before import_logs existed still imports.
     import_logs: list[ImportLogBackup] = Field(default_factory=list)
     transactions: list[TransactionBackup]
+    # Defaulted so a backup exported before merge archives existed still imports.
+    transfer_merge_archives: list[TransferMergeArchiveBackup] = Field(default_factory=list)
     # Defaulted so a backup exported before transaction splitting existed
     # still imports cleanly under the same format version.
     transaction_splits: list[TransactionSplitBackup] = Field(default_factory=list)

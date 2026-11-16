@@ -381,6 +381,8 @@ class TransactionRead(TransactionFields):
     id: int
     # Bulk-import batch id (NULL for manual entries). Not writable by clients.
     import_log_id: int | None = None
+    # True when this transfer came from merge and legs can be restored on delete.
+    has_merge_archive: bool = False
     account: AccountRead
     # Present for transfers so the list UI can show "Source → Dest" without a second lookup.
     transfer_account: AccountRead | None = None

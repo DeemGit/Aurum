@@ -27,7 +27,7 @@ from app.models.goal import Goal, GoalContribution
 from app.models.recurring import RecurringTransaction
 from app.models.settings import AppSettings
 from app.models.tag import Tag
-from app.models.transaction import ImportLog, Transaction, TransactionSplit
+from app.models.transaction import ImportLog, Transaction, TransactionSplit, TransferMergeArchive
 from app.services.settings_service import list_dashboard_excluded_tag_ids, replace_dashboard_excluded_tags
 from app.schemas.backup import (
     AccountBackup,
@@ -47,6 +47,7 @@ from app.schemas.backup import (
     TagBackup,
     TransactionBackup,
     TransactionSplitBackup,
+    TransferMergeArchiveBackup,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,9 @@ async def build_backup(session: AsyncSession) -> BackupPayload:
     tags = (await session.execute(select(Tag))).scalars().all()
     import_logs = (await session.execute(select(ImportLog).order_by(ImportLog.id))).scalars().all()
     transactions = (await session.execute(select(Transaction).options(selectinload(Transaction.tags)))).scalars().all()
+    transfer_merge_archives = (
+        await session.execute(select(TransferMergeArchive).order_by(TransferMergeArchive.id))
+    ).scalars().all()
     transaction_splits = (await session.execute(select(TransactionSplit))).scalars().all()
     assets = (await session.execute(select(Asset))).scalars().all()
     valuations = (await session.execute(select(AssetValuation))).scalars().all()
@@ -85,6 +89,9 @@ async def build_backup(session: AsyncSession) -> BackupPayload:
                 update={"tag_ids": [tag.id for tag in row.tags]}
             )
             for row in transactions
+        ],
+        transfer_merge_archives=[
+            TransferMergeArchiveBackup.model_validate(row) for row in transfer_merge_archives
         ],
         transaction_splits=[TransactionSplitBackup.model_validate(row) for row in transaction_splits],
         assets=[AssetBackup.model_validate(row) for row in assets],
@@ -112,6 +119,14 @@ def _validate_references(payload: BackupPayload) -> None:
     asset_ids = {row.id for row in payload.assets}
     tag_ids = {row.id for row in payload.tags}
     import_log_ids = {row.id for row in payload.import_logs}
+    transaction_ids = {row.id for row in payload.transactions}
+
+    for archive in payload.transfer_merge_archives:
+        if archive.transfer_id not in transaction_ids:
+            raise HTTPException(
+                400,
+                f"Transfer merge archive {archive.id} references unknown transfer_id {archive.transfer_id}",
+            )
 
     for c in payload.categories:
         if c.parent_id is not None and c.parent_id not in category_ids:
@@ -132,7 +147,6 @@ def _validate_references(payload: BackupPayload) -> None:
             if tag_id not in tag_ids:
                 raise HTTPException(400, f"Transaction {t.id} references unknown tag_id {tag_id}")
 
-    transaction_ids = {row.id for row in payload.transactions}
     for s in payload.transaction_splits:
         if s.transaction_id not in transaction_ids:
             raise HTTPException(400, f"Transaction split {s.id} references unknown transaction_id {s.transaction_id}")
@@ -218,6 +232,8 @@ async def restore_backup(session: AsyncSession, payload: BackupPayload) -> None:
         # transaction_splits rows (ON DELETE CASCADE) — deleted explicitly
         # here anyway to keep this block's ordering self-documenting.
         await session.execute(delete(TransactionSplit))
+        # Archives RESTRICT delete of their transfer — drop them first.
+        await session.execute(delete(TransferMergeArchive))
         await session.execute(delete(Transaction))
         await session.execute(delete(ImportLog))
         await session.execute(delete(Tag))
@@ -259,6 +275,9 @@ async def restore_backup(session: AsyncSession, payload: BackupPayload) -> None:
                 data["transfer_amount"] = data["amount"]
             transactions_by_id[row.id] = Transaction(**data, tags=[])
         session.add_all(transactions_by_id.values())
+        session.add_all(
+            TransferMergeArchive(**row.model_dump()) for row in payload.transfer_merge_archives
+        )
         session.add_all(TransactionSplit(**row.model_dump()) for row in payload.transaction_splits)
 
         session.add_all(AssetValuation(**row.model_dump()) for row in payload.asset_valuations)
@@ -305,6 +324,7 @@ async def restore_backup(session: AsyncSession, payload: BackupPayload) -> None:
         await _reset_sequence(session, "import_logs", payload.import_logs)
         await _reset_sequence(session, "assets", payload.assets)
         await _reset_sequence(session, "transactions", payload.transactions)
+        await _reset_sequence(session, "transfer_merge_archives", payload.transfer_merge_archives)
         await _reset_sequence(session, "transaction_splits", payload.transaction_splits)
         await _reset_sequence(session, "asset_valuations", payload.asset_valuations)
         # Only needed for explicit-id portfolios from payload — a fallback

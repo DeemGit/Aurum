@@ -399,8 +399,199 @@ async def test_merge_transfer_keeps_wall_clock_date_not_utc_day(client: AsyncCli
     assert merged.status_code == 201, merged.text
     body = merged.json()
     assert body["date"] == "2026-11-08"
+    assert body["has_merge_archive"] is True
     occurred = datetime.fromisoformat(body["occurred_at"].replace("Z", "+00:00"))
     assert occurred.astimezone(timezone.utc) == datetime(2026, 11, 8, 18, 11, tzinfo=timezone.utc)
+
+
+async def test_merge_transfer_archives_legs_and_restores_on_delete(client: AsyncClient, categories):
+    a = (await client.post("/accounts", json={"name": "SrcArch", "type": "checking", "currency": "USD"})).json()
+    b = (await client.post("/accounts", json={"name": "DstArch", "type": "checking", "currency": "USD"})).json()
+    groceries = categories["Groceries"]["id"]
+    salary = categories["Salary"]["id"]
+    hash_a = "3" * 64
+    hash_b = "4" * 64
+
+    expense = await client.post(
+        "/transactions",
+        json=_txn(
+            a["id"],
+            category_id=groceries,
+            amount="40.00",
+            date="2026-08-01",
+            description="archived out",
+            notes="keep me",
+            import_hash=hash_a,
+        ),
+    )
+    income = await client.post(
+        "/transactions",
+        json=_txn(
+            b["id"],
+            type="income",
+            category_id=salary,
+            amount="40.00",
+            date="2026-08-01",
+            description="archived in",
+            import_hash=hash_b,
+        ),
+    )
+    assert expense.status_code == 201, expense.text
+    assert income.status_code == 201, income.text
+    expense_id = expense.json()["id"]
+    income_id = income.json()["id"]
+
+    merged = await client.post(
+        "/transactions/merge-transfer",
+        json={
+            "source_transaction_id": expense_id,
+            "destination_transaction_id": income_id,
+        },
+    )
+    assert merged.status_code == 201, merged.text
+    transfer_id = merged.json()["id"]
+    assert merged.json()["has_merge_archive"] is True
+
+    listed = await client.get("/transactions", params={"page_size": 50})
+    ids = {row["id"] for row in listed.json()["items"]}
+    assert transfer_id in ids
+    assert expense_id not in ids
+    assert income_id not in ids
+
+    deleted = await client.delete(f"/transactions/{transfer_id}")
+    assert deleted.status_code == 204
+
+    restored = await client.get("/transactions", params={"page_size": 50})
+    by_id = {row["id"]: row for row in restored.json()["items"]}
+    assert transfer_id not in by_id
+    assert by_id[expense_id]["type"] == "expense"
+    assert by_id[expense_id]["notes"] == "keep me"
+    assert by_id[expense_id]["import_hash"] == hash_a
+    assert by_id[income_id]["type"] == "income"
+    assert by_id[income_id]["import_hash"] == hash_b
+    assert by_id[expense_id].get("has_merge_archive") is False
+
+
+async def test_delete_manual_transfer_without_archive_does_not_restore(client: AsyncClient):
+    a = (await client.post("/accounts", json={"name": "ManA", "type": "checking", "currency": "USD"})).json()
+    b = (await client.post("/accounts", json={"name": "ManB", "type": "checking", "currency": "USD"})).json()
+    created = await client.post(
+        "/transactions",
+        json={
+            "account_id": a["id"],
+            "transfer_account_id": b["id"],
+            "type": "transfer",
+            "amount": "12.00",
+            "description": "manual hop",
+            "date": "2026-08-02",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["has_merge_archive"] is False
+    transfer_id = created.json()["id"]
+
+    deleted = await client.delete(f"/transactions/{transfer_id}")
+    assert deleted.status_code == 204
+    listed = await client.get("/transactions", params={"page_size": 50})
+    assert all(row["id"] != transfer_id for row in listed.json()["items"])
+    assert listed.json()["total"] == 0
+
+
+async def test_merge_rejects_expense_with_refunds(client: AsyncClient, categories):
+    a = (await client.post("/accounts", json={"name": "RefA", "type": "checking", "currency": "USD"})).json()
+    b = (await client.post("/accounts", json={"name": "RefB", "type": "checking", "currency": "USD"})).json()
+    groceries = categories["Groceries"]["id"]
+    salary = categories["Salary"]["id"]
+
+    expense = await client.post(
+        "/transactions",
+        json=_txn(a["id"], category_id=groceries, amount="20.00", date="2026-08-03", description="refunded buy"),
+    )
+    income = await client.post(
+        "/transactions",
+        json=_txn(
+            b["id"],
+            type="income",
+            category_id=salary,
+            amount="20.00",
+            date="2026-08-03",
+            description="other side",
+        ),
+    )
+    assert expense.status_code == 201
+    assert income.status_code == 201
+    refund = await client.post(
+        "/transactions",
+        json=_txn(
+            a["id"],
+            type="refund",
+            amount="5.00",
+            date="2026-08-04",
+            description="partial refund",
+            refund_of_transaction_id=expense.json()["id"],
+            category_id=None,
+        ),
+    )
+    assert refund.status_code == 201, refund.text
+
+    merged = await client.post(
+        "/transactions/merge-transfer",
+        json={
+            "source_transaction_id": expense.json()["id"],
+            "destination_transaction_id": income.json()["id"],
+        },
+    )
+    assert merged.status_code == 400
+
+
+async def test_backup_roundtrip_preserves_transfer_merge_archive(client: AsyncClient, categories):
+    a = (await client.post("/accounts", json={"name": "BakA", "type": "checking", "currency": "USD"})).json()
+    b = (await client.post("/accounts", json={"name": "BakB", "type": "checking", "currency": "USD"})).json()
+    groceries = categories["Groceries"]["id"]
+    salary = categories["Salary"]["id"]
+
+    expense = await client.post(
+        "/transactions",
+        json=_txn(a["id"], category_id=groceries, amount="15.00", date="2026-08-05", description="bak out"),
+    )
+    income = await client.post(
+        "/transactions",
+        json=_txn(
+            b["id"],
+            type="income",
+            category_id=salary,
+            amount="15.00",
+            date="2026-08-05",
+            description="bak in",
+        ),
+    )
+    merged = await client.post(
+        "/transactions/merge-transfer",
+        json={
+            "source_transaction_id": expense.json()["id"],
+            "destination_transaction_id": income.json()["id"],
+        },
+    )
+    assert merged.status_code == 201, merged.text
+    transfer_id = merged.json()["id"]
+
+    payload = (await client.get("/backup/export")).json()
+    assert len(payload["transfer_merge_archives"]) == 1
+    assert payload["transfer_merge_archives"][0]["transfer_id"] == transfer_id
+
+    imported = await client.post("/backup/import", json=payload)
+    assert imported.status_code == 200, imported.text
+
+    refetched = next(
+        row for row in (await client.get("/transactions", params={"page_size": 50})).json()["items"] if row["id"] == transfer_id
+    )
+    assert refetched["has_merge_archive"] is True
+
+    deleted = await client.delete(f"/transactions/{transfer_id}")
+    assert deleted.status_code == 204
+    restored = {row["id"]: row for row in (await client.get("/transactions", params={"page_size": 50})).json()["items"]}
+    assert expense.json()["id"] in restored
+    assert income.json()["id"] in restored
 
 
 async def test_attach_import_hash_to_transfer(client: AsyncClient, categories):

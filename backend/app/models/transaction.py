@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -83,6 +84,35 @@ class Transaction(Base, TimestampMixin):
         back_populates="transaction", cascade="all, delete-orphan"
     )
     import_log: Mapped["ImportLog | None"] = relationship(back_populates="transactions")
+    merge_archive: Mapped["TransferMergeArchive | None"] = relationship(
+        back_populates="transfer", uselist=False
+    )
+
+    @property
+    def has_merge_archive(self) -> bool:
+        """True when this transfer was produced by merge and legs can be restored."""
+        return self.merge_archive is not None
+
+
+class TransferMergeArchive(Base):
+    """Snapshot of expense+income legs removed by merge-transfer.
+
+    On DELETE of the resulting transfer the legs are restored from these
+    JSON payloads and this row is removed. ON DELETE RESTRICT keeps the DB
+    from silently dropping the archive with the transfer.
+    """
+
+    __tablename__ = "transfer_merge_archives"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transfer_id: Mapped[int] = mapped_column(
+        ForeignKey("transactions.id", ondelete="RESTRICT"), nullable=False, unique=True
+    )
+    expense_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    income_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
+
+    transfer: Mapped["Transaction"] = relationship(back_populates="merge_archive")
 
 
 class ImportLog(Base):
