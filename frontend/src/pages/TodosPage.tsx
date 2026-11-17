@@ -91,9 +91,9 @@ export function TodosPage() {
             <ul className="divide-y divide-gridline">
               {items.map((item) => {
                 const muted = isMuted(item, today);
-                // Step / complete / delete — only while still open.
+                // Step / complete — only while still open.
                 const canMutate = !item.deleted_at && !item.completed_at;
-                // Edit is allowed for completed items; soft-deleted stay read-only.
+                // Edit and delete are allowed for completed items; soft-deleted stay read-only.
                 const canEdit = !item.deleted_at;
                 return (
                   <li
@@ -172,7 +172,7 @@ export function TodosPage() {
                             <Pencil size={15} />
                           </button>
                         )}
-                        {canMutate && (
+                        {canEdit && (
                           <button
                             type="button"
                             aria-label={t("common.delete")}
