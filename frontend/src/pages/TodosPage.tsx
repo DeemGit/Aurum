@@ -91,7 +91,10 @@ export function TodosPage() {
             <ul className="divide-y divide-gridline">
               {items.map((item) => {
                 const muted = isMuted(item, today);
-                const canAct = !item.deleted_at && !item.completed_at;
+                // Step / complete / delete — only while still open.
+                const canMutate = !item.deleted_at && !item.completed_at;
+                // Edit is allowed for completed items; soft-deleted stay read-only.
+                const canEdit = !item.deleted_at;
                 return (
                   <li
                     key={item.id}
@@ -135,7 +138,7 @@ export function TodosPage() {
                         </div>
                       </div>
                       <div className="flex shrink-0 flex-wrap gap-1">
-                        {canAct && item.step_count != null && (
+                        {canMutate && item.step_count != null && (
                           <Button
                             type="button"
                             variant="secondary"
@@ -147,7 +150,7 @@ export function TodosPage() {
                             {t("todo.step")}
                           </Button>
                         )}
-                        {canAct && (
+                        {canMutate && (
                           <Button
                             type="button"
                             variant="secondary"
@@ -159,7 +162,7 @@ export function TodosPage() {
                             {t("todo.complete")}
                           </Button>
                         )}
-                        {canAct && (
+                        {canEdit && (
                           <button
                             type="button"
                             aria-label={t("common.edit")}
@@ -169,7 +172,7 @@ export function TodosPage() {
                             <Pencil size={15} />
                           </button>
                         )}
-                        {canAct && (
+                        {canMutate && (
                           <button
                             type="button"
                             aria-label={t("common.delete")}
