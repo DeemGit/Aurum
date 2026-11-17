@@ -63,6 +63,11 @@ async def test_create_list_update_soft_delete(client: AsyncClient):
     assert len(with_deleted) == 1
     assert with_deleted[0]["deleted_at"] is not None
 
+    # Second delete of a soft-deleted row purges it permanently.
+    purge_resp = await client.delete(f"/todos/{created['id']}")
+    assert purge_resp.status_code == 204
+    assert (await client.get("/todos", params={"include_deleted": True})).json() == []
+
 
 async def test_step_and_complete(client: AsyncClient):
     created = (await client.post("/todos", json=_todo_payload(step_count=4))).json()

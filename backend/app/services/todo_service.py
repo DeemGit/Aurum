@@ -58,9 +58,15 @@ async def update_todo(session: AsyncSession, todo_id: int, payload: TodoUpdate) 
     return _as_read(row)
 
 
-async def soft_delete_todo(session: AsyncSession, todo_id: int) -> None:
-    row = await _get_active(session, todo_id)
-    row.deleted_at = datetime.now(timezone.utc)
+async def delete_todo(session: AsyncSession, todo_id: int) -> None:
+    """Soft-delete an active row; permanently purge an already soft-deleted one."""
+    row = await session.get(TodoItem, todo_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    if row.deleted_at is None:
+        row.deleted_at = datetime.now(timezone.utc)
+    else:
+        await session.delete(row)
     await session.commit()
 
 

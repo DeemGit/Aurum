@@ -32,7 +32,7 @@ async def update_todo_route(
 
 @router.delete("/{todo_id}", status_code=204)
 async def delete_todo_route(todo_id: int, session: AsyncSession = Depends(get_session)) -> None:
-    await todo_service.soft_delete_todo(session, todo_id)
+    await todo_service.delete_todo(session, todo_id)
 
 
 @router.post("/{todo_id}/complete", response_model=TodoRead)

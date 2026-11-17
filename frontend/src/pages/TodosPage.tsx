@@ -58,7 +58,10 @@ export function TodosPage() {
   }
 
   function handleDelete(item: TodoItem) {
-    if (window.confirm(t("todo.confirmDelete", { title: item.title }))) {
+    const message = item.deleted_at
+      ? t("todo.confirmPurge", { title: item.title })
+      : t("todo.confirmDelete", { title: item.title });
+    if (window.confirm(message)) {
       deleteTodo.mutate(item.id);
     }
   }
@@ -93,8 +96,10 @@ export function TodosPage() {
                 const muted = isMuted(item, today);
                 // Step / complete — only while still open.
                 const canMutate = !item.deleted_at && !item.completed_at;
-                // Edit and delete are allowed for completed items; soft-deleted stay read-only.
+                // Edit and soft-delete are allowed for completed items.
                 const canEdit = !item.deleted_at;
+                // Soft-deleted rows can be purged permanently (shown with include_deleted).
+                const canPurge = !!item.deleted_at;
                 return (
                   <li
                     key={item.id}
@@ -172,7 +177,7 @@ export function TodosPage() {
                             <Pencil size={15} />
                           </button>
                         )}
-                        {canEdit && (
+                        {(canEdit || canPurge) && (
                           <button
                             type="button"
                             aria-label={t("common.delete")}
