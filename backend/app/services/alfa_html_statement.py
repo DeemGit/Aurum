@@ -287,6 +287,9 @@ def _extract_operation(cell: _Node, day: date, *, second_of_day: int) -> AlfaOpe
 
     footers = _find_descendants(cell, test_id="operation-cell-footer")
     comment = _all_text(footers[0]).strip() if footers else ""
+    # Declined bank ops show footer «Операция отклонена…» — never import them.
+    if "операция отклонена" in comment.casefold():
+        return None
 
     return AlfaOperation(
         operation_date=_format_datetime(day, second_of_day),

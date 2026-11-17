@@ -132,3 +132,31 @@ def test_same_day_duplicate_merchant_gets_distinct_times():
     assert count == 2
     assert "06.11.2026 00:00:00" in csv_text
     assert "06.11.2026 00:00:01" in csv_text
+
+
+def test_parse_alfa_html_skips_declined_operations():
+    """Bank UI marks declined payments with footer «Операция отклонена…»."""
+    html = """
+    <section data-test-id="operations-history">
+      <div data-date="2026-11-06T12:00:00.000+0300">
+        <button data-test-id="operation-cell">
+          <div data-test-id="title-text_content">Учи.ру</div>
+          <span data-test-id="transaction-category-name">Образование</span>
+          <div data-test-id="transaction-status">-<span>3992<span>,00 ₽</span></span></div>
+          <footer data-test-id="operation-cell-footer">
+            Операция отклонена. Проверьте, достаточно ли денег на карте, и повторите попытку
+          </footer>
+        </button>
+        <button data-test-id="operation-cell">
+          <div data-test-id="title-text_content">Детский мир</div>
+          <span data-test-id="transaction-category-name">Детские товары</span>
+          <div data-test-id="transaction-status">-<span>1622<span>,40 ₽</span></span></div>
+        </button>
+      </div>
+    </section>
+    """
+    ops = parse_alfa_html(html, today=TODAY)
+    assert len(ops) == 1
+    assert ops[0].merchant == "Детский мир"
+    assert ops[0].amount == "1622.40"
+    assert all("отклонена" not in (op.comment or "").casefold() for op in ops)
