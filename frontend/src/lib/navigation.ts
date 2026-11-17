@@ -7,6 +7,7 @@ import {
   Layers,
   Lightbulb,
   LayoutDashboard,
+  ListTodo,
   Percent,
   PieChart,
   Repeat,
@@ -40,6 +41,7 @@ export const NAV_ITEMS: NavItem[] = [
   { labelKey: "nav.budget", to: "/budget", icon: Target },
   { labelKey: "nav.recurring", to: "/recurring", icon: Repeat },
   { labelKey: "nav.goals", to: "/goals", icon: Flag },
+  { labelKey: "nav.todos", to: "/todos", icon: ListTodo },
   { labelKey: "nav.advice", to: "/advice", icon: Lightbulb },
   { labelKey: "nav.settings", to: "/settings", icon: Settings },
 ];

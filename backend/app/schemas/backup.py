@@ -14,6 +14,7 @@ from app.models.enums import (
     CryptoTransactionType,
     RecurringFrequency,
     RiskLevel,
+    TodoKind,
     TransactionType,
 )
 
@@ -217,6 +218,21 @@ class GoalContributionBackup(BaseModel):
     note: str | None
 
 
+class TodoItemBackup(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    due_date: date_
+    amount: Decimal | None = None
+    kind: TodoKind
+    progress_percent: int = 0
+    step_count: int | None = None
+    count_in_dashboard: bool = True
+    completed_at: datetime | None = None
+    deleted_at: datetime | None = None
+
+
 class RecurringTransactionBackup(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -292,6 +308,8 @@ class BackupPayload(BaseModel):
     # cleanly under the same format version.
     goals: list[GoalBackup] = Field(default_factory=list)
     goal_contributions: list[GoalContributionBackup] = Field(default_factory=list)
+    # Defaulted so a backup exported before todo_items existed still imports.
+    todo_items: list[TodoItemBackup] = Field(default_factory=list)
     # Defaulted so a backup exported before recurring transactions existed
     # still imports cleanly under the same format version.
     recurring_transactions: list[RecurringTransactionBackup] = Field(default_factory=list)

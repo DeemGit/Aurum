@@ -20,6 +20,7 @@ import { RecurringPage } from "@/pages/RecurringPage";
 import { ReportsPage } from "@/pages/ReportsPage";
 import { RoiPage } from "@/pages/RoiPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { TodosPage } from "@/pages/TodosPage";
 import { TransactionsPage } from "@/pages/TransactionsPage";
 
 export default function App() {
@@ -65,6 +66,7 @@ export default function App() {
             <Route path="/budget" element={<BudgetPage />} />
             <Route path="/advice" element={<AdvicePage />} />
             <Route path="/goals" element={<GoalsPage />} />
+            <Route path="/todos" element={<TodosPage />} />
             <Route path="/recurring" element={<RecurringPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>

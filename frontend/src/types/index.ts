@@ -232,6 +232,8 @@ export interface DashboardSummary {
   spent: string;
   net: string;
   transferred_out: string;
+  planned_expenses: string;
+  planned_income: string;
   spending_by_category: CategoryBreakdownItem[];
 }
 
@@ -412,6 +414,33 @@ export interface GoalContributionInput {
   amount: string;
   date: string;
   note?: string | null;
+}
+
+export type TodoKind = "expense" | "income";
+
+export interface TodoItem {
+  id: number;
+  title: string;
+  due_date: string;
+  amount: string | null;
+  kind: TodoKind;
+  progress_percent: number;
+  step_count: number | null;
+  count_in_dashboard: boolean;
+  completed_at: string | null;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TodoInput {
+  title: string;
+  due_date: string;
+  amount: string | null;
+  kind: TodoKind;
+  progress_percent?: number;
+  step_count: number | null;
+  count_in_dashboard: boolean;
 }
 
 export interface Budget {

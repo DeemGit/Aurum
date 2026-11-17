@@ -23,6 +23,7 @@ from app.models import (  # noqa: F401 — registers metadata
     GoalContribution,
     RecurringTransaction,
     Tag,
+    TodoItem,
     Transaction,
     TransactionImportHash,
     TransactionSplit,

@@ -14,6 +14,8 @@ async def test_summary_is_zero_for_a_month_with_no_transactions(client: AsyncCli
     assert money(body["real_income"]) == 0
     assert money(body["spent"]) == 0
     assert money(body["net"]) == 0
+    assert money(body["planned_expenses"]) == 0
+    assert money(body["planned_income"]) == 0
     assert body["spending_by_category"] == []
 
 

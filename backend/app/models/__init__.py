@@ -8,6 +8,7 @@ from app.models.goal import Goal, GoalContribution
 from app.models.recurring import RecurringTransaction
 from app.models.settings import AppSettings, DashboardExcludedTag
 from app.models.tag import Tag
+from app.models.todo import TodoItem
 from app.models.transaction import (
     ImportLog,
     Transaction,
@@ -35,6 +36,7 @@ __all__ = [
     "ImportLog",
     "RecurringTransaction",
     "Tag",
+    "TodoItem",
     "Transaction",
     "TransactionImportHash",
     "TransactionSplit",

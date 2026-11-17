@@ -17,6 +17,13 @@ class CategoryKind(str, enum.Enum):
     EXPENSE = "expense"
 
 
+class TodoKind(str, enum.Enum):
+    """Planned cash-flow direction for a todo checklist item."""
+
+    INCOME = "income"
+    EXPENSE = "expense"
+
+
 class TransactionType(str, enum.Enum):
     INCOME = "income"
     EXPENSE = "expense"

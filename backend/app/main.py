@@ -21,6 +21,7 @@ from app.api.routes import (
     reports,
     settings as settings_routes,
     tags,
+    todos,
     transactions,
 )
 from app.core.config import APP_VERSION, get_settings
@@ -85,6 +86,7 @@ app.include_router(settings_routes.router, prefix="/api")
 app.include_router(budgets.router, prefix="/api")
 app.include_router(advice.router, prefix="/api")
 app.include_router(goals.router, prefix="/api")
+app.include_router(todos.router, prefix="/api")
 app.include_router(recurring.router, prefix="/api")
 app.include_router(cash_flow.router, prefix="/api")
 app.include_router(tags.router, prefix="/api")

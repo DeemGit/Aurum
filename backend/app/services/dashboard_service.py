@@ -6,12 +6,13 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import TransactionType
+from app.models.enums import TodoKind, TransactionType
 from app.models.tag import Tag
 from app.models.transaction import Transaction
 from app.schemas.dashboard import CategoryBreakdownChildItem, CategoryBreakdownItem, DashboardSummary
 from app.services.category_rollup import rollup_spending_by_top_level_category
 from app.services.settings_service import list_dashboard_excluded_tag_ids
+from app.services.todo_service import sum_planned_amounts
 
 # Categorical slots are capped at 8 (dataviz skill: a 9th series folds into "Other",
 # never a generated hue) — this is also the exact size of the default category set.
@@ -116,6 +117,13 @@ async def get_dashboard_summary(session: AsyncSession, year: int, month: int) ->
             )
         )
 
+    planned_expenses = await sum_planned_amounts(
+        session, kind=TodoKind.EXPENSE, year=year, month=month
+    )
+    planned_income = await sum_planned_amounts(
+        session, kind=TodoKind.INCOME, year=year, month=month
+    )
+
     return DashboardSummary(
         year=year,
         month=month,
@@ -123,5 +131,7 @@ async def get_dashboard_summary(session: AsyncSession, year: int, month: int) ->
         spent=spent,
         net=real_income - spent,
         transferred_out=transferred_out,
+        planned_expenses=planned_expenses,
+        planned_income=planned_income,
         spending_by_category=spending_by_category,
     )

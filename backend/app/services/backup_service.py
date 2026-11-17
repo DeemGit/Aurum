@@ -27,6 +27,7 @@ from app.models.goal import Goal, GoalContribution
 from app.models.recurring import RecurringTransaction
 from app.models.settings import AppSettings
 from app.models.tag import Tag
+from app.models.todo import TodoItem
 from app.models.transaction import ImportLog, Transaction, TransactionSplit, TransferMergeArchive
 from app.services.settings_service import list_dashboard_excluded_tag_ids, replace_dashboard_excluded_tags
 from app.schemas.backup import (
@@ -45,6 +46,7 @@ from app.schemas.backup import (
     ImportLogBackup,
     RecurringTransactionBackup,
     TagBackup,
+    TodoItemBackup,
     TransactionBackup,
     TransactionSplitBackup,
     TransferMergeArchiveBackup,
@@ -73,6 +75,7 @@ async def build_backup(session: AsyncSession) -> BackupPayload:
     budgets = (await session.execute(select(Budget))).scalars().all()
     goals = (await session.execute(select(Goal))).scalars().all()
     goal_contributions = (await session.execute(select(GoalContribution))).scalars().all()
+    todo_items = (await session.execute(select(TodoItem))).scalars().all()
     recurring_transactions = (await session.execute(select(RecurringTransaction))).scalars().all()
     app_settings = await session.get(AppSettings, 1)
 
@@ -102,6 +105,7 @@ async def build_backup(session: AsyncSession) -> BackupPayload:
         budgets=[BudgetBackup.model_validate(row) for row in budgets],
         goals=[GoalBackup.model_validate(row) for row in goals],
         goal_contributions=[GoalContributionBackup.model_validate(row) for row in goal_contributions],
+        todo_items=[TodoItemBackup.model_validate(row) for row in todo_items],
         recurring_transactions=[RecurringTransactionBackup.model_validate(row) for row in recurring_transactions],
         app_settings=(
             AppSettingsBackup.model_validate(app_settings).model_copy(
@@ -227,6 +231,7 @@ async def restore_backup(session: AsyncSession, payload: BackupPayload) -> None:
         await session.execute(delete(Budget))
         await session.execute(delete(GoalContribution))
         await session.execute(delete(Goal))
+        await session.execute(delete(TodoItem))
         await session.execute(delete(RecurringTransaction))
         # Deleting transactions cascades transaction_tags and
         # transaction_splits rows (ON DELETE CASCADE) — deleted explicitly
@@ -309,6 +314,7 @@ async def restore_backup(session: AsyncSession, payload: BackupPayload) -> None:
         session.add_all(Budget(**row.model_dump()) for row in payload.budgets)
         session.add_all(Goal(**row.model_dump()) for row in payload.goals)
         session.add_all(GoalContribution(**row.model_dump()) for row in payload.goal_contributions)
+        session.add_all(TodoItem(**row.model_dump()) for row in payload.todo_items)
         session.add_all(RecurringTransaction(**row.model_dump()) for row in payload.recurring_transactions)
         await session.flush()
 
@@ -335,6 +341,7 @@ async def restore_backup(session: AsyncSession, payload: BackupPayload) -> None:
         await _reset_sequence(session, "budgets", payload.budgets)
         await _reset_sequence(session, "goals", payload.goals)
         await _reset_sequence(session, "goal_contributions", payload.goal_contributions)
+        await _reset_sequence(session, "todo_items", payload.todo_items)
         await _reset_sequence(session, "recurring_transactions", payload.recurring_transactions)
 
         # Singleton row — updated in place, not deleted/recreated (no

@@ -71,7 +71,7 @@ export function DashboardPage() {
         </p>
       )}
 
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
         <StatCard
           label={t("dashboard.statRealIncomeLabel")}
           value={isLoading ? "…" : formatCurrency(data?.real_income ?? 0)}
@@ -79,9 +79,21 @@ export function DashboardPage() {
           tone="success"
         />
         <StatCard
+          label={t("dashboard.statPlannedIncomeLabel")}
+          value={isLoading ? "…" : formatCurrency(data?.planned_income ?? 0)}
+          caption={t("dashboard.statPlannedIncomeCaption")}
+          tone="success"
+        />
+        <StatCard
           label={t("dashboard.statSpentLabel")}
           value={isLoading ? "…" : formatCurrency(data?.spent ?? 0)}
           caption={t("dashboard.statSpentCaption")}
+          tone="danger"
+        />
+        <StatCard
+          label={t("dashboard.statPlannedExpensesLabel")}
+          value={isLoading ? "…" : formatCurrency(data?.planned_expenses ?? 0)}
+          caption={t("dashboard.statPlannedExpensesCaption")}
           tone="danger"
         />
         <StatCard

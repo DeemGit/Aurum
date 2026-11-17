@@ -35,4 +35,7 @@ class DashboardSummary(BaseModel):
     spent: Decimal
     net: Decimal
     transferred_out: Decimal
+    # Future incomplete todos in this month with amount + count_in_dashboard.
+    planned_expenses: Decimal = Decimal("0")
+    planned_income: Decimal = Decimal("0")
     spending_by_category: list[CategoryBreakdownItem]
