@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { MonthSelector } from "@/components/layout/MonthSelector";
 import { YearSelector } from "@/components/layout/YearSelector";
+import { PlannedBalanceCard } from "@/components/dashboard/PlannedBalanceCard";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { SpendingByCategoryCard } from "@/components/dashboard/SpendingByCategoryCard";
 import { RecentTransactionsCard } from "@/components/dashboard/RecentTransactionsCard";
@@ -36,6 +37,10 @@ export function DashboardPage() {
 
   const { data, isLoading, isError } = useDashboardSummary(year, month);
   const rate = data ? savingsRate(Number(data.real_income), Number(data.net)) : null;
+  const plannedIncome = Number(data?.planned_income ?? 0);
+  const plannedExpenses = Number(data?.planned_expenses ?? 0);
+  const hasPlanned = plannedIncome > 0 || plannedExpenses > 0;
+  const projectedBalance = Number(data?.net ?? 0) + plannedIncome - plannedExpenses;
   const topCategoryIds = (data?.spending_by_category ?? [])
     .map((item) => item.category_id)
     .filter((id): id is number => id !== null);
@@ -71,7 +76,7 @@ export function DashboardPage() {
         </p>
       )}
 
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatCard
           label={t("dashboard.statRealIncomeLabel")}
           value={isLoading ? "…" : formatCurrency(data?.real_income ?? 0)}
@@ -79,21 +84,9 @@ export function DashboardPage() {
           tone="success"
         />
         <StatCard
-          label={t("dashboard.statPlannedIncomeLabel")}
-          value={isLoading ? "…" : formatCurrency(data?.planned_income ?? 0)}
-          caption={t("dashboard.statPlannedIncomeCaption")}
-          tone="success"
-        />
-        <StatCard
           label={t("dashboard.statSpentLabel")}
           value={isLoading ? "…" : formatCurrency(data?.spent ?? 0)}
           caption={t("dashboard.statSpentCaption")}
-          tone="danger"
-        />
-        <StatCard
-          label={t("dashboard.statPlannedExpensesLabel")}
-          value={isLoading ? "…" : formatCurrency(data?.planned_expenses ?? 0)}
-          caption={t("dashboard.statPlannedExpensesCaption")}
           tone="danger"
         />
         <StatCard
@@ -109,6 +102,15 @@ export function DashboardPage() {
           tone={rate === null ? "default" : rate >= 0 ? "success" : "danger"}
         />
       </div>
+
+      {hasPlanned && (
+        <PlannedBalanceCard
+          plannedIncome={plannedIncome}
+          plannedExpenses={plannedExpenses}
+          projectedBalance={projectedBalance}
+          isLoading={isLoading}
+        />
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
         <SpendingByCategoryCard
