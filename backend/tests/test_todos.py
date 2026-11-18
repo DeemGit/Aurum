@@ -92,6 +92,48 @@ async def test_step_and_complete(client: AsyncClient):
     assert no_steps.status_code == 400
 
 
+async def test_step_percent_uses_integer_division(client: AsyncClient):
+    """11/12 steps → 91%, not 88% from repeated round(100/12) adds."""
+    created = (
+        await client.post("/todos", json=_todo_payload(title="Series", step_count=12, amount=None))
+    ).json()
+    body = created
+    for _ in range(11):
+        body = (await client.post(f"/todos/{created['id']}/step")).json()
+    assert body["progress_percent"] == 91
+    assert body["completed_at"] is None
+    done = (await client.post(f"/todos/{created['id']}/step")).json()
+    assert done["progress_percent"] == 100
+    assert done["completed_at"] is not None
+
+
+async def test_progress_kind_never_counts_in_dashboard(client: AsyncClient):
+    today = date.today()
+    created = (
+        await client.post(
+            "/todos",
+            json=_todo_payload(
+                title="Watchlist",
+                kind="progress",
+                amount="500.00",
+                count_in_dashboard=True,
+                step_count=None,
+                due_date=_future_in_month(0),
+            ),
+        )
+    ).json()
+    assert created["kind"] == "progress"
+    assert created["count_in_dashboard"] is False
+
+    resp = await client.get(
+        "/dashboard/summary",
+        params={"year": today.year, "month": today.month},
+    )
+    body = resp.json()
+    assert money(body["planned_expenses"]) == 0
+    assert money(body["planned_income"]) == 0
+
+
 async def test_dashboard_planned_only_future_incomplete_with_flag(client: AsyncClient):
     today = date.today()
     # In-month future expense counted.

@@ -1,6 +1,6 @@
 """CRUD and progress helpers for planned todo checklist items."""
 from datetime import date, datetime, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -15,6 +15,40 @@ def _as_read(row: TodoItem) -> TodoRead:
     return TodoRead.model_validate(row)
 
 
+def percent_for_steps(steps_done: int, step_count: int) -> int:
+    """Integer percent for k of N steps: (100 * k) // N; full → 100."""
+    if step_count < 1:
+        return 0
+    if steps_done >= step_count:
+        return 100
+    if steps_done <= 0:
+        return 0
+    return (100 * steps_done) // step_count
+
+
+def steps_from_percent(progress_percent: int, step_count: int) -> int:
+    """Largest k such that percent_for_steps(k, N) <= progress_percent."""
+    if step_count < 1:
+        return 0
+    if progress_percent >= 100:
+        return step_count
+    if progress_percent <= 0:
+        return 0
+    k = 0
+    for i in range(1, step_count + 1):
+        if percent_for_steps(i, step_count) <= progress_percent:
+            k = i
+        else:
+            break
+    return k
+
+
+def _apply_progress_kind_rules(row: TodoItem) -> None:
+    """Progress notes never feed the dashboard planned_* totals."""
+    if row.kind == TodoKind.PROGRESS:
+        row.count_in_dashboard = False
+
+
 async def list_todos(session: AsyncSession, *, include_deleted: bool = False) -> list[TodoRead]:
     stmt = select(TodoItem).order_by(TodoItem.due_date.asc(), TodoItem.id.asc())
     if not include_deleted:
@@ -25,6 +59,7 @@ async def list_todos(session: AsyncSession, *, include_deleted: bool = False) ->
 
 async def create_todo(session: AsyncSession, payload: TodoCreate) -> TodoRead:
     row = TodoItem(**payload.model_dump())
+    _apply_progress_kind_rules(row)
     if row.progress_percent >= 100:
         row.progress_percent = 100
         row.completed_at = datetime.now(timezone.utc)
@@ -47,6 +82,7 @@ async def update_todo(session: AsyncSession, todo_id: int, payload: TodoUpdate) 
     # Explicit null for amount / step_count clears the field.
     for key, value in data.items():
         setattr(row, key, value)
+    _apply_progress_kind_rules(row)
     if "progress_percent" in data:
         if row.progress_percent >= 100:
             row.progress_percent = 100
@@ -83,11 +119,9 @@ async def step_todo(session: AsyncSession, todo_id: int) -> TodoRead:
     row = await _get_active(session, todo_id)
     if row.step_count is None or row.step_count < 1:
         raise HTTPException(status_code=400, detail="Todo has no step_count")
-    step = (Decimal(100) / Decimal(row.step_count)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    # Keep percent as int 0–100; accumulate via Decimal then round.
-    current = Decimal(row.progress_percent)
-    nxt = min(Decimal(100), current + step)
-    row.progress_percent = int(nxt.to_integral_value(rounding=ROUND_HALF_UP))
+    n = row.step_count
+    k = min(n, steps_from_percent(row.progress_percent, n) + 1)
+    row.progress_percent = percent_for_steps(k, n)
     if row.progress_percent >= 100:
         row.progress_percent = 100
         row.completed_at = datetime.now(timezone.utc)

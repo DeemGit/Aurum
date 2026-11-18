@@ -10,7 +10,7 @@ import {
   useTodos,
 } from "@/hooks/useTodos";
 import { formatCurrency, getIntlLocale } from "@/lib/format";
-import { useTranslation } from "@/lib/i18n";
+import { useTranslation, type TranslationKey } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { TodoItem } from "@/types";
 
@@ -35,11 +35,29 @@ function isMuted(item: TodoItem, today: string): boolean {
   return item.due_date < today;
 }
 
-/** Derive completed steps from percent when step_count is set. */
+function percentForSteps(stepsDone: number, stepCount: number): number {
+  if (stepCount < 1 || stepsDone <= 0) return 0;
+  if (stepsDone >= stepCount) return 100;
+  return Math.floor((100 * stepsDone) / stepCount);
+}
+
+/** Largest k such that percentForSteps(k, N) <= progressPercent (matches backend). */
 function currentStep(progressPercent: number, stepCount: number): number {
+  if (stepCount < 1) return 0;
   if (progressPercent >= 100) return stepCount;
   if (progressPercent <= 0) return 0;
-  return Math.min(stepCount, Math.round((progressPercent * stepCount) / 100));
+  let k = 0;
+  for (let i = 1; i <= stepCount; i += 1) {
+    if (percentForSteps(i, stepCount) <= progressPercent) k = i;
+    else break;
+  }
+  return k;
+}
+
+function kindLabel(kind: TodoItem["kind"], t: (key: TranslationKey) => string): string {
+  if (kind === "income") return t("todo.kind.income");
+  if (kind === "progress") return t("todo.kind.progress");
+  return t("todo.kind.expense");
 }
 
 export function TodosPage() {
@@ -125,16 +143,13 @@ export function TodosPage() {
                           )}
                         </div>
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-muted">
-                          <span>
-                            {item.kind === "income" ? t("todo.kind.income") : t("todo.kind.expense")}
-                          </span>
+                          <span>{kindLabel(item.kind, t)}</span>
                           {item.amount != null && (
                             <span className="tabular-nums text-text-primary">
                               {formatCurrency(item.amount)}
                             </span>
                           )}
                           <span className="tabular-nums">
-                            {t("todo.progressLabel")}:{" "}
                             {item.step_count != null
                               ? t("todo.progressWithSteps", {
                                   percent: item.progress_percent,

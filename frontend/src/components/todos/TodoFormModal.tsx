@@ -82,7 +82,8 @@ export function TodoFormModal({ open, onClose, todo }: TodoFormModalProps) {
       amount: form.amount.trim() === "" ? null : form.amount.trim(),
       kind: form.kind,
       step_count,
-      count_in_dashboard: form.count_in_dashboard,
+      // Progress notes never feed dashboard planned_* totals.
+      count_in_dashboard: form.kind === "progress" ? false : form.count_in_dashboard,
     };
 
     try {
@@ -142,12 +143,18 @@ export function TodoFormModal({ open, onClose, todo }: TodoFormModalProps) {
               id="todo-kind"
               className="h-9 w-full rounded-lg border border-border bg-surface-1 px-3 text-sm text-text-primary"
               value={form.kind}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, kind: event.target.value as TodoKind }))
-              }
+              onChange={(event) => {
+                const kind = event.target.value as TodoKind;
+                setForm((prev) => ({
+                  ...prev,
+                  kind,
+                  count_in_dashboard: kind === "progress" ? false : prev.count_in_dashboard,
+                }));
+              }}
             >
               <option value="expense">{t("todo.kind.expense")}</option>
               <option value="income">{t("todo.kind.income")}</option>
+              <option value="progress">{t("todo.kind.progress")}</option>
             </select>
           </div>
           <div>
@@ -164,17 +171,19 @@ export function TodoFormModal({ open, onClose, todo }: TodoFormModalProps) {
           </div>
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-text-primary">
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border-border"
-            checked={form.count_in_dashboard}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, count_in_dashboard: event.target.checked }))
-            }
-          />
-          {t("todo.form.countInDashboard")}
-        </label>
+        {form.kind !== "progress" && (
+          <label className="flex items-center gap-2 text-sm text-text-primary">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-border"
+              checked={form.count_in_dashboard}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, count_in_dashboard: event.target.checked }))
+              }
+            />
+            {t("todo.form.countInDashboard")}
+          </label>
+        )}
 
         {error && <p className="text-sm text-danger">{error}</p>}
 

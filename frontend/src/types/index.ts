@@ -416,7 +416,7 @@ export interface GoalContributionInput {
   note?: string | null;
 }
 
-export type TodoKind = "expense" | "income";
+export type TodoKind = "expense" | "income" | "progress";
 
 export interface TodoItem {
   id: number;
