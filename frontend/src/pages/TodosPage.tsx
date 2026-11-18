@@ -35,6 +35,13 @@ function isMuted(item: TodoItem, today: string): boolean {
   return item.due_date < today;
 }
 
+/** Derive completed steps from percent when step_count is set. */
+function currentStep(progressPercent: number, stepCount: number): number {
+  if (progressPercent >= 100) return stepCount;
+  if (progressPercent <= 0) return 0;
+  return Math.min(stepCount, Math.round((progressPercent * stepCount) / 100));
+}
+
 export function TodosPage() {
   const { t } = useTranslation();
   const [includeDeleted, setIncludeDeleted] = useState(false);
@@ -127,7 +134,14 @@ export function TodosPage() {
                             </span>
                           )}
                           <span className="tabular-nums">
-                            {t("todo.progress", { percent: item.progress_percent })}
+                            {t("todo.progressLabel")}:{" "}
+                            {item.step_count != null
+                              ? t("todo.progressWithSteps", {
+                                  percent: item.progress_percent,
+                                  current: currentStep(item.progress_percent, item.step_count),
+                                  total: item.step_count,
+                                })
+                              : t("todo.progress", { percent: item.progress_percent })}
                           </span>
                           {!item.count_in_dashboard && (
                             <span className="rounded bg-surface-2 px-1 py-0.5">
