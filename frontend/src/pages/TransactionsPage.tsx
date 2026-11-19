@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { FileUp, Plus, Search, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -6,13 +6,17 @@ import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
 import { MonthSelector } from "@/components/layout/MonthSelector";
 import { YearSelector } from "@/components/layout/YearSelector";
-import { TransactionsTable } from "@/components/transactions/TransactionsTable";
+import {
+  TransactionsTable,
+  type TransactionSelectMode,
+} from "@/components/transactions/TransactionsTable";
 import { TransactionFormModal } from "@/components/transactions/TransactionFormModal";
 import { useTransactions, useDeleteTransaction, useTransactionYears } from "@/hooks/useTransactions";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useCategories } from "@/hooks/useCategories";
 import { useTags } from "@/hooks/useTags";
 import type { TransactionSort } from "@/api/transactions";
+import { formatCurrency } from "@/lib/format";
 import { useTranslation } from "@/lib/i18n";
 import { buildHierarchicalCategories, translateCategoryName } from "@/lib/categoryLabels";
 import type { Transaction, TransactionType } from "@/types";
@@ -66,6 +70,7 @@ export function TransactionsPage() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
 
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
@@ -86,6 +91,41 @@ export function TransactionsPage() {
     page_size: PAGE_SIZE,
   });
   const deleteTransaction = useDeleteTransaction();
+  const items = data?.items ?? [];
+
+  // Drop selection when the visible list context changes.
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [year, month, accountId, type, categoryId, tagId, sort, page, search]);
+
+  const selectionTotals = useMemo(() => {
+    let spent = 0;
+    let cashback = 0;
+    for (const tx of items) {
+      if (!selectedIds.has(tx.id)) continue;
+      if (tx.type === "expense") spent += Number(tx.amount);
+      if (tx.cashback_amount != null) {
+        const cb = Number(tx.cashback_amount);
+        if (cb !== 0) cashback += cb;
+      }
+    }
+    return { spent, cashback, count: selectedIds.size };
+  }, [items, selectedIds]);
+
+  function handleSelectClick(_transaction: Transaction, index: number, mode: TransactionSelectMode) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (mode === "fromHere") {
+        for (const tx of items.slice(index)) next.add(tx.id);
+        return next;
+      }
+      const id = items[index]?.id;
+      if (id == null) return prev;
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
   // Grouped by kind and hierarchical within each group (a subcategory right
@@ -297,11 +337,13 @@ export function TransactionsPage() {
             <p className="py-12 text-center text-sm text-text-muted">{t("common.loading")}</p>
           ) : (
             <TransactionsTable
-              items={data?.items ?? []}
+              items={items}
               viewAccountId={accountId ? Number(accountId) : null}
               onEdit={openEditModal}
               onDelete={handleDelete}
               onJumpToMonth={isSearching ? handleJumpToMonth : undefined}
+              selectedIds={selectedIds}
+              onSelectClick={handleSelectClick}
             />
           )}
 
@@ -318,6 +360,27 @@ export function TransactionsPage() {
           )}
         </CardContent>
       </Card>
+
+      {selectionTotals.count > 0 && (
+        <div className="sticky bottom-3 z-10 rounded-xl border border-border bg-surface-1/95 p-3 shadow-sm backdrop-blur sm:p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
+              <span className="font-medium text-text-primary">
+                {t("transactions.selection.count", { count: selectionTotals.count })}
+              </span>
+              <span className="tabular-nums text-text-primary">
+                {t("transactions.selection.spent")}: {formatCurrency(selectionTotals.spent)}
+              </span>
+              <span className="tabular-nums text-success">
+                {t("transactions.selection.cashback")}: {formatCurrency(selectionTotals.cashback)}
+              </span>
+            </div>
+            <Button variant="secondary" onClick={() => setSelectedIds(new Set())} className="w-full sm:w-auto">
+              {t("transactions.selection.clear")}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <TransactionFormModal
         open={modalOpen}
