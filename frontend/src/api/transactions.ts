@@ -6,6 +6,8 @@ export type TransactionSort = "date_desc" | "amount_desc" | "amount_asc";
 export interface TransactionFilters {
   year?: number;
   month?: number;
+  /** Day-of-month chips (1–31); omit or empty = whole month. */
+  days?: number[];
   start_date?: string;
   end_date?: string;
   account_id?: number;

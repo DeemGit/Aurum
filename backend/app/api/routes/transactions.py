@@ -149,6 +149,8 @@ async def _load_transaction(session: AsyncSession, transaction_id: int) -> Trans
 async def list_transactions(
     year: int | None = Query(default=None, ge=2000, le=2100),
     month: int | None = Query(default=None, ge=1, le=12),
+    # Day-of-month chips on the transactions page (1–31); empty/omitted = whole month.
+    days: list[int] | None = Query(default=None),
     start_date: date_ | None = Query(default=None),
     end_date: date_ | None = Query(default=None),
     account_id: int | None = None,
@@ -176,6 +178,12 @@ async def list_transactions(
     if month is not None:
         stmt = stmt.where(func.extract("month", Transaction.date) == month)
         count_stmt = count_stmt.where(func.extract("month", Transaction.date) == month)
+    if days:
+        valid_days = [d for d in days if 1 <= d <= 31]
+        if valid_days:
+            day_filter = func.extract("day", Transaction.date).in_(valid_days)
+            stmt = stmt.where(day_filter)
+            count_stmt = count_stmt.where(day_filter)
     if start_date is not None:
         stmt = stmt.where(Transaction.date >= start_date)
         count_stmt = count_stmt.where(Transaction.date >= start_date)

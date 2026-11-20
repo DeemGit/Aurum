@@ -271,6 +271,29 @@ async def test_list_filters_by_explicit_date_range(client: AsyncClient, account_
     assert body["items"][0]["date"] == "2024-06-15"
 
 
+async def test_list_filters_by_days_of_month(client: AsyncClient, account_id, categories):
+    """Non-contiguous day chips: only the requested days of the month."""
+    category_id = categories["Groceries"]["id"]
+    for txn_date, description in [
+        ("2026-04-01", "day one"),
+        ("2026-04-05", "day five"),
+        ("2026-04-10", "day ten"),
+    ]:
+        resp = await client.post(
+            "/transactions",
+            json=_txn(account_id, category_id=category_id, date=txn_date, description=description),
+        )
+        assert resp.status_code == 201
+
+    resp = await client.get(
+        "/transactions",
+        params=[("year", "2026"), ("month", "4"), ("days", "1"), ("days", "5")],
+    )
+    body = resp.json()
+    assert body["total"] == 2
+    assert sorted(item["description"] for item in body["items"]) == ["Day five", "Day one"]
+
+
 async def test_search_matches_description_across_any_period_ignoring_month_filter(
     client: AsyncClient, account_id, categories
 ):

@@ -4,6 +4,7 @@ import { FileUp, Plus, Search, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
+import { DaySelector } from "@/components/layout/DaySelector";
 import { MonthSelector } from "@/components/layout/MonthSelector";
 import { YearSelector } from "@/components/layout/YearSelector";
 import {
@@ -16,7 +17,7 @@ import { useAccounts } from "@/hooks/useAccounts";
 import { useCategories } from "@/hooks/useCategories";
 import { useTags } from "@/hooks/useTags";
 import type { TransactionSort } from "@/api/transactions";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatSignedCurrency } from "@/lib/format";
 import { useTranslation } from "@/lib/i18n";
 import { buildHierarchicalCategories, translateCategoryName } from "@/lib/categoryLabels";
 import type { Transaction, TransactionType } from "@/types";
@@ -71,6 +72,7 @@ export function TransactionsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const [selectedDays, setSelectedDays] = useState<number[]>([]);
 
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
@@ -81,6 +83,7 @@ export function TransactionsPage() {
     // every period instead of being boxed into the currently selected one.
     year: isSearching ? undefined : year,
     month: isSearching ? undefined : month,
+    days: !isSearching && selectedDays.length > 0 ? selectedDays : undefined,
     search: isSearching ? search : undefined,
     account_id: accountId ? Number(accountId) : undefined,
     type: type || undefined,
@@ -93,23 +96,40 @@ export function TransactionsPage() {
   const deleteTransaction = useDeleteTransaction();
   const items = data?.items ?? [];
 
-  // Drop selection when the visible list context changes.
+  // Drop row selection when the visible list context changes.
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [year, month, accountId, type, categoryId, tagId, sort, page, search]);
+  }, [year, month, accountId, type, categoryId, tagId, sort, page, search, selectedDays]);
+
+  // Day chips belong to the selected month — clear when month/year changes.
+  useEffect(() => {
+    setSelectedDays([]);
+  }, [year, month]);
 
   const selectionTotals = useMemo(() => {
     let spent = 0;
+    let income = 0;
+    let refunds = 0;
     let cashback = 0;
     for (const tx of items) {
       if (!selectedIds.has(tx.id)) continue;
-      if (tx.type === "expense") spent += Number(tx.amount);
+      const amount = Number(tx.amount);
+      if (tx.type === "expense") spent += amount;
+      else if (tx.type === "income") income += amount;
+      else if (tx.type === "refund") refunds += amount;
       if (tx.cashback_amount != null) {
         const cb = Number(tx.cashback_amount);
         if (cb !== 0) cashback += cb;
       }
     }
-    return { spent, cashback, count: selectedIds.size };
+    return {
+      spent,
+      income,
+      refunds,
+      cashback,
+      net: income + refunds - spent,
+      count: selectedIds.size,
+    };
   }, [items, selectedIds]);
 
   function handleSelectClick(_transaction: Transaction, index: number, mode: TransactionSelectMode) {
@@ -167,6 +187,7 @@ export function TransactionsPage() {
     const date = new Date(`${transaction.date}T00:00:00`);
     setYear(date.getFullYear());
     setMonth(date.getMonth() + 1);
+    setSelectedDays([]);
     setSearchInput("");
     setSearch("");
     setPage(1);
@@ -175,26 +196,41 @@ export function TransactionsPage() {
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <div className={`min-w-0 flex-1 ${isSearching ? "pointer-events-none opacity-50" : ""}`}>
-            <MonthSelector
-              month={month}
-              onChange={(value) => {
-                setMonth(value);
-                setPage(1);
-              }}
-            />
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className={`min-w-0 flex-1 ${isSearching ? "pointer-events-none opacity-50" : ""}`}>
+              <MonthSelector
+                month={month}
+                onChange={(value) => {
+                  setMonth(value);
+                  setSelectedDays([]);
+                  setPage(1);
+                }}
+              />
+            </div>
+            <div className={isSearching ? "pointer-events-none opacity-50" : ""}>
+              <YearSelector
+                years={years ?? [now.getFullYear()]}
+                year={year}
+                onChange={(value) => {
+                  setYear(value);
+                  setSelectedDays([]);
+                  setPage(1);
+                }}
+              />
+            </div>
           </div>
-          <div className={isSearching ? "pointer-events-none opacity-50" : ""}>
-            <YearSelector
-              years={years ?? [now.getFullYear()]}
+          {!isSearching && (
+            <DaySelector
               year={year}
-              onChange={(value) => {
-                setYear(value);
+              month={month}
+              selectedDays={selectedDays}
+              onChange={(days) => {
+                setSelectedDays(days);
                 setPage(1);
               }}
             />
-          </div>
+          )}
         </div>
         <div className="flex gap-2">
           <Link to="/transactions/import" className="flex-1 sm:flex-none">
@@ -372,7 +408,20 @@ export function TransactionsPage() {
                 {t("transactions.selection.spent")}: {formatCurrency(selectionTotals.spent)}
               </span>
               <span className="tabular-nums text-success">
+                {t("transactions.selection.income")}: {formatCurrency(selectionTotals.income)}
+              </span>
+              <span className="tabular-nums text-success">
+                {t("transactions.selection.refunds")}: {formatCurrency(selectionTotals.refunds)}
+              </span>
+              <span className="tabular-nums text-success">
                 {t("transactions.selection.cashback")}: {formatCurrency(selectionTotals.cashback)}
+              </span>
+              <span
+                className={`font-medium tabular-nums ${
+                  selectionTotals.net >= 0 ? "text-success" : "text-danger"
+                }`}
+              >
+                {t("transactions.selection.net")}: {formatSignedCurrency(selectionTotals.net)}
               </span>
             </div>
             <Button variant="secondary" onClick={() => setSelectedIds(new Set())} className="w-full sm:w-auto">
