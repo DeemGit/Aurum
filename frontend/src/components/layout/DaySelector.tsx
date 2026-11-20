@@ -107,10 +107,8 @@ export function DaySelector({ year, month, selectedDays, onChange }: DaySelector
 
   return (
     <div
-      className={cn(
-        "flex gap-1.5 overflow-x-auto pb-1 select-none [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-        dragStart != null && "touch-none"
-      )}
+      className={cn("grid w-full gap-0.5 select-none pb-1", dragStart != null && "touch-none")}
+      style={{ gridTemplateColumns: `repeat(${count}, minmax(0, 1fr))` }}
     >
       {Array.from({ length: count }, (_, index) => {
         const day = index + 1;
@@ -127,7 +125,7 @@ export function DaySelector({ year, month, selectedDays, onChange }: DaySelector
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
             className={cn(
-              "shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium tabular-nums transition-colors sm:px-3 sm:py-1.5 sm:text-sm",
+              "min-w-0 w-full rounded-full border px-0.5 py-1 text-center text-[11px] font-medium tabular-nums transition-colors sm:px-1 sm:py-1.5 sm:text-xs",
               active
                 ? inPreview && !selected.has(day)
                   ? "border-series-6/70 bg-series-6/70 text-white"
