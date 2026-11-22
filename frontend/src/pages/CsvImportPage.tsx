@@ -47,6 +47,15 @@ import type { TransactionInput } from "@/types";
 type Step = "upload" | "map" | "preview";
 type UploadSource = "csv" | "gpb-html" | "alfa-html";
 
+/** Pick the upload tab from the account name: ГПБ/GPB → gpb-html,
+ * Alfa/Альфа/Alpha → alfa-html, anything else → csv. */
+function uploadSourceForAccountName(name: string): UploadSource {
+  const lower = name.toLowerCase();
+  if (lower.includes("гпб") || lower.includes("gpb")) return "gpb-html";
+  if (lower.includes("alfa") || lower.includes("альфа") || lower.includes("alpha")) return "alfa-html";
+  return "csv";
+}
+
 const NONE = "";
 
 function todayLocalIso() {
@@ -179,6 +188,16 @@ export function CsvImportPage() {
   // encoding here), the key doesn't change, this doesn't run, and manual
   // column picks stay put. Switching the bank profile re-runs it on
   // purpose: the whole point of picking a bank is to replace the mapping.
+  // When accounts finish loading (or accountId changes), sync the upload
+  // tab from the selected account name — covers first paint / deep-link.
+  useEffect(() => {
+    if (!accountId || !accounts?.length) return;
+    const account = accounts.find((item) => String(item.id) === accountId);
+    if (!account) return;
+    setUploadSource(uploadSourceForAccountName(account.name));
+    setParseError(null);
+  }, [accountId, accounts]);
+
   // JSON.stringify, not join(): joining on a separator would read
   // ["ab","c"] and ["a","bc"] as one and the same header row.
   const headersKey = JSON.stringify(headers);
@@ -692,7 +711,19 @@ export function CsvImportPage() {
           <CardTitle>{t("transactions.import.accountLabel")}</CardTitle>
         </CardHeader>
         <CardContent>
-          <Select value={accountId} onChange={(event) => setAccountId(event.target.value)} className="sm:w-72">
+          <Select
+            value={accountId}
+            onChange={(event) => {
+              const nextId = event.target.value;
+              setAccountId(nextId);
+              const account = accounts?.find((item) => String(item.id) === nextId);
+              if (account) {
+                setUploadSource(uploadSourceForAccountName(account.name));
+                setParseError(null);
+              }
+            }}
+            className="sm:w-72"
+          >
             <option value="" disabled>
               {t("transactions.form.selectAccount")}
             </option>
