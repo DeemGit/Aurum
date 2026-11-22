@@ -105,8 +105,10 @@ function generateRowKey(): string {
   return `split-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function emptySplitRow(): SplitRowState {
-  return { key: generateRowKey(), category_id: "", amount: "", note: "" };
+function emptySplitRow(baseCategoryId = ""): SplitRowState {
+  // When splitting, baseCategoryId is the parent — the "— no specific
+  // subcategory —" option in each row's select (value === form.category_id).
+  return { key: generateRowKey(), category_id: baseCategoryId, amount: "", note: "" };
 }
 
 // Cents, not floats — a plain Number sum of "0.10" + "0.20" style amounts can
@@ -395,7 +397,7 @@ export function TransactionFormModal({
   }
 
   function addSplitRow() {
-    setSplitRows((prev) => [...prev, emptySplitRow()]);
+    setSplitRows((prev) => [...prev, emptySplitRow(form.category_id)]);
   }
 
   function removeSplitRow(key: string) {
@@ -420,10 +422,11 @@ export function TransactionFormModal({
       const next = !prev;
       if (next) {
         const current = relevantCategories.find((category) => String(category.id) === form.category_id);
+        const baseId = current?.parent_id ? String(current.parent_id) : form.category_id;
         if (current?.parent_id) {
-          setForm((f) => ({ ...f, category_id: String(current.parent_id) }));
+          setForm((f) => ({ ...f, category_id: baseId }));
         }
-        setSplitRows([emptySplitRow(), emptySplitRow()]);
+        setSplitRows([emptySplitRow(baseId), emptySplitRow(baseId)]);
       }
       return next;
     });
@@ -431,7 +434,7 @@ export function TransactionFormModal({
 
   function handleBaseCategoryChange(value: string) {
     setForm((prev) => ({ ...prev, category_id: value }));
-    if (splitMode) setSplitRows([emptySplitRow(), emptySplitRow()]);
+    if (splitMode) setSplitRows([emptySplitRow(value), emptySplitRow(value)]);
   }
 
   async function handleSubmit(event: React.FormEvent) {
