@@ -1,6 +1,7 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ArrowLeftRight, CalendarSearch, Pencil, SquareDivide, StickyNote, Trash2 } from "lucide-react";
 import { Dialog } from "@/components/ui/Dialog";
+import { purchaseLabel } from "@/components/transactions/RefundOfPicker";
 import { getCategoryIcon } from "@/lib/icons";
 import { formatCurrency, formatTransactionDate } from "@/lib/format";
 import { useTranslation } from "@/lib/i18n";
@@ -21,6 +22,8 @@ interface TransactionsTableProps {
    * lets a row's date carry the year and offers a way to jump back to
    * browsing that transaction's month instead of just listing it flat. */
   onJumpToMonth?: (transaction: Transaction) => void;
+  /** Open a transaction by id (refund → original purchase link). */
+  onOpenTransaction?: (id: number) => void;
   selectedIds?: Set<number>;
   onSelectClick?: (transaction: Transaction, index: number, mode: TransactionSelectMode) => void;
 }
@@ -168,6 +171,7 @@ export function TransactionsTable({
   onDelete,
   viewAccountId = null,
   onJumpToMonth,
+  onOpenTransaction,
   selectedIds,
   onSelectClick,
 }: TransactionsTableProps) {
@@ -213,30 +217,41 @@ export function TransactionsTable({
               )}
               aria-selected={isSelected}
             >
-              <SelectHitArea
-                className="flex min-w-0 flex-1 items-center gap-3"
-                hasSelection={hasSelection}
-                onSelect={(mode) => onSelectClick?.(tx, index, mode)}
-              >
-                <span
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
-                  style={{
-                    backgroundColor:
-                      typeof color === "string" && color.startsWith("#") ? `${color}26` : "var(--surface-2)",
-                  }}
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <SelectHitArea
+                  className="flex min-w-0 items-center gap-3"
+                  hasSelection={hasSelection}
+                  onSelect={(mode) => onSelectClick?.(tx, index, mode)}
                 >
-                  <Icon size={16} style={{ color }} />
-                </span>
-
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium text-text-primary">{tx.description}</span>
-                  <span className="block truncate text-xs text-text-muted">
-                    {formatTransactionDate(tx.date, Boolean(onJumpToMonth))} · {accountLabel}
-                    {categoryLabel ? ` · ${categoryLabel}` : ""}
-                    {tx.tags.length > 0 ? ` · ${tx.tags.map((tag) => tag.name).join(", ")}` : ""}
+                  <span
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                    style={{
+                      backgroundColor:
+                        typeof color === "string" && color.startsWith("#") ? `${color}26` : "var(--surface-2)",
+                    }}
+                  >
+                    <Icon size={16} style={{ color }} />
                   </span>
-                </span>
-              </SelectHitArea>
+
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-text-primary">{tx.description}</span>
+                    <span className="block truncate text-xs text-text-muted">
+                      {formatTransactionDate(tx.date, Boolean(onJumpToMonth))} · {accountLabel}
+                      {categoryLabel ? ` · ${categoryLabel}` : ""}
+                      {tx.tags.length > 0 ? ` · ${tx.tags.map((tag) => tag.name).join(", ")}` : ""}
+                    </span>
+                  </span>
+                </SelectHitArea>
+                {tx.type === "refund" && tx.refund_of && onOpenTransaction && (
+                  <button
+                    type="button"
+                    className="ml-12 max-w-full truncate text-left text-xs text-series-1 hover:underline"
+                    onClick={() => onOpenTransaction(tx.refund_of!.id)}
+                  >
+                    {t("transactions.refundOfLink", { name: purchaseLabel(tx.refund_of) })}
+                  </button>
+                )}
+              </span>
 
               <span className="flex shrink-0 items-center gap-1.5">
                 <span

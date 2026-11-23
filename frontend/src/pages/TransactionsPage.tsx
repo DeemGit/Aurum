@@ -16,7 +16,7 @@ import { useTransactions, useDeleteTransaction, useTransactionYears } from "@/ho
 import { useAccounts } from "@/hooks/useAccounts";
 import { useCategories } from "@/hooks/useCategories";
 import { useTags } from "@/hooks/useTags";
-import type { TransactionSort } from "@/api/transactions";
+import { fetchTransactionById, type TransactionSort } from "@/api/transactions";
 import { formatCurrency, formatSignedCurrency } from "@/lib/format";
 import { useTranslation } from "@/lib/i18n";
 import { buildHierarchicalCategories, translateCategoryName } from "@/lib/categoryLabels";
@@ -168,6 +168,18 @@ export function TransactionsPage() {
   function openEditModal(transaction: Transaction) {
     setEditingTransaction(transaction);
     setModalOpen(true);
+  }
+
+  /** Opens a transaction by id (refund → original purchase). Prefers the
+   * current page list, then falls back to a search fetch. */
+  async function openTransactionById(id: number) {
+    const fromList = items.find((item) => item.id === id);
+    if (fromList) {
+      openEditModal(fromList);
+      return;
+    }
+    const found = await fetchTransactionById(id);
+    if (found) openEditModal(found);
   }
 
   function handleDelete(transaction: Transaction) {
@@ -377,6 +389,7 @@ export function TransactionsPage() {
               viewAccountId={accountId ? Number(accountId) : null}
               onEdit={openEditModal}
               onDelete={handleDelete}
+              onOpenTransaction={(id) => void openTransactionById(id)}
               onJumpToMonth={isSearching ? handleJumpToMonth : undefined}
               selectedIds={selectedIds}
               onSelectClick={handleSelectClick}
@@ -436,6 +449,7 @@ export function TransactionsPage() {
         onClose={() => setModalOpen(false)}
         transaction={editingTransaction}
         defaultAccountId={accountId ? Number(accountId) : null}
+        onOpenTransaction={(id) => void openTransactionById(id)}
       />
     </div>
   );

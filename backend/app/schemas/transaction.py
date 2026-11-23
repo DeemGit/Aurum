@@ -375,6 +375,18 @@ class ImportHashRead(BaseModel):
     import_hash: str
 
 
+class RefundOfSummary(BaseModel):
+    """Slim original purchase on a refund row — enough for a name link in UI."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    description: str
+    merchant: str | None = None
+    date: date_
+    amount: Decimal
+
+
 class TransactionRead(TransactionFields):
     model_config = ConfigDict(from_attributes=True)
 
@@ -392,6 +404,8 @@ class TransactionRead(TransactionFields):
     splits: list[TransactionSplitRead] = Field(default_factory=list)
     # Both legs after merge-transfer; CSV preview uses these for hash dedupe.
     import_hashes: list[ImportHashRead] = Field(default_factory=list)
+    # Original expense for refunds (name link in list/form); None otherwise.
+    refund_of: RefundOfSummary | None = None
 
 
 class ImportHashAttach(BaseModel):

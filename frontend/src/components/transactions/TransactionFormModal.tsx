@@ -4,6 +4,7 @@ import { Copy, Plus, Wand2, X } from "lucide-react";
 import { Dialog } from "@/components/ui/Dialog";
 import { Button } from "@/components/ui/Button";
 import { Input, Label, Select } from "@/components/ui/Input";
+import { RefundOfPicker } from "@/components/transactions/RefundOfPicker";
 import { TagInput } from "@/components/transactions/TagInput";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useCategories } from "@/hooks/useCategories";
@@ -37,6 +38,8 @@ interface TransactionFormModalProps {
   transaction?: Transaction | null;
   /** When creating, prefer this account (e.g. the transactions-page filter). */
   defaultAccountId?: number | null;
+  /** Open another transaction by id (e.g. refund → original purchase link). */
+  onOpenTransaction?: (id: number) => void;
 }
 
 const LAST_DEFAULTS_KEY = "aurum:last-transaction-defaults";
@@ -124,6 +127,7 @@ export function TransactionFormModal({
   onClose,
   transaction,
   defaultAccountId = null,
+  onOpenTransaction,
 }: TransactionFormModalProps) {
   const { t, language } = useTranslation();
   const { data: accounts } = useAccounts();
@@ -798,13 +802,11 @@ export function TransactionFormModal({
         {form.type === "refund" && (
           <div>
             <Label htmlFor="refund_of">{t("transactions.form.refundOfLabel")}</Label>
-            <Input
-              id="refund_of"
-              type="number"
-              required
-              min="1"
+            <RefundOfPicker
               value={form.refund_of_transaction_id}
-              onChange={(event) => setForm((prev) => ({ ...prev, refund_of_transaction_id: event.target.value }))}
+              linkedSummary={transaction?.refund_of ?? null}
+              onChange={(id) => setForm((prev) => ({ ...prev, refund_of_transaction_id: id }))}
+              onOpenLinked={onOpenTransaction}
             />
           </div>
         )}

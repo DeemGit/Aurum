@@ -11,7 +11,7 @@ import { TransactionFormModal } from "@/components/transactions/TransactionFormM
 import { useCategories } from "@/hooks/useCategories";
 import { useCategoryRanking, useCategorySpendingReport } from "@/hooks/useReports";
 import { useDeleteTransaction, useTransactions, useTransactionYears } from "@/hooks/useTransactions";
-import type { TransactionSort } from "@/api/transactions";
+import { fetchTransactionById, type TransactionSort } from "@/api/transactions";
 import { computeRange, type CustomYearRange, type RangePreset } from "@/lib/dateRange";
 import { useTranslation } from "@/lib/i18n";
 import { buildHierarchicalCategories, translateCategoryName } from "@/lib/categoryLabels";
@@ -77,6 +77,16 @@ export function ReportsPage() {
   function handleEdit(transaction: Transaction) {
     setEditingTransaction(transaction);
     setModalOpen(true);
+  }
+
+  async function openTransactionById(id: number) {
+    const fromList = transactions?.items.find((item) => item.id === id);
+    if (fromList) {
+      handleEdit(fromList);
+      return;
+    }
+    const found = await fetchTransactionById(id);
+    if (found) handleEdit(found);
   }
 
   function handleDelete(transaction: Transaction) {
@@ -178,7 +188,12 @@ export function ReportsPage() {
           {isTransactionsLoading ? (
             <p className="py-12 text-center text-sm text-text-muted">{t("common.loading")}</p>
           ) : (
-            <TransactionsTable items={transactions?.items ?? []} onEdit={handleEdit} onDelete={handleDelete} />
+            <TransactionsTable
+              items={transactions?.items ?? []}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
+              onOpenTransaction={(id) => void openTransactionById(id)}
+            />
           )}
 
           {totalPages > 1 && (
@@ -199,6 +214,7 @@ export function ReportsPage() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         transaction={editingTransaction}
+        onOpenTransaction={(id) => void openTransactionById(id)}
       />
     </div>
   );

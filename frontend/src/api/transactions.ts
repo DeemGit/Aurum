@@ -42,6 +42,12 @@ export function fetchTransactions(filters: TransactionFilters = {}) {
   return api.get<TransactionPage>(`/transactions?${params.toString()}`);
 }
 
+/** Resolve one transaction by id via search (digit queries also match id). */
+export async function fetchTransactionById(id: number): Promise<Transaction | null> {
+  const page = await fetchTransactions({ search: String(id), page_size: 20 });
+  return page.items.find((item) => item.id === id) ?? null;
+}
+
 // Used by CSV import's duplicate check (see pages/CsvImportPage.tsx) — needs
 // every transaction in the imported date range for one account, not just a
 // page of them, to know what's already there. Capped at 25 pages (5000 rows

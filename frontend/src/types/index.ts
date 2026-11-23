@@ -98,6 +98,15 @@ export interface ImportHash {
   import_hash: string;
 }
 
+/** Slim original purchase nested on refund rows for name links in UI. */
+export interface RefundOfSummary {
+  id: number;
+  description: string;
+  merchant: string | null;
+  date: string;
+  amount: string;
+}
+
 export interface Transaction {
   id: number;
   account_id: number;
@@ -129,6 +138,8 @@ export interface Transaction {
   cashback_category: CashbackCategory | null;
   tags: Tag[];
   splits: TransactionSplit[];
+  /** Original expense for refunds; null/undefined otherwise. */
+  refund_of?: RefundOfSummary | null;
 }
 
 export interface TransactionPage {

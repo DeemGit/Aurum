@@ -67,6 +67,8 @@ _EAGER = (
     selectinload(Transaction.splits).selectinload(TransactionSplit.category),
     selectinload(Transaction.import_hashes),
     selectinload(Transaction.merge_archive),
+    # Original expense for refund rows — list/form show its name as a link.
+    selectinload(Transaction.refund_of),
 )
 
 
@@ -282,7 +284,10 @@ async def list_transactions(
                 Transaction.notes.ilike(pattern),
             ]
             if query.isdigit():
+                # Whole-unit amount match, plus exact transaction id so a
+                # known id (e.g. refund → original purchase) finds the row.
                 clauses.append(func.trunc(Transaction.amount) == Decimal(query))
+                clauses.append(Transaction.id == int(query))
             search_clause = or_(*clauses)
             stmt = stmt.where(search_clause)
             count_stmt = count_stmt.where(search_clause)
