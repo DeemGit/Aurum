@@ -141,6 +141,8 @@ export function CsvImportPage() {
   const [accountId, setAccountId] = useState("");
   const [step, setStep] = useState<Step>("upload");
   const [uploadSource, setUploadSource] = useState<UploadSource>("csv");
+  // When off, skip the map step if defaults already cover date/amount/description.
+  const [verbose, setVerbose] = useState(false);
   const [fileName, setFileName] = useState("");
   const [fileBuffer, setFileBuffer] = useState<ArrayBuffer | null>(null);
   const [encoding, setEncoding] = useState<Encoding>("utf-8");
@@ -527,7 +529,12 @@ export function CsvImportPage() {
     setMapping(defaults.mapping);
     setDateFormat(defaults.dateFormat);
     setAmountFormat(defaults.amountFormat);
-    setStep("map");
+    goAfterParse(defaults.mapping);
+  }
+
+  function goAfterParse(nextMapping: Mapping) {
+    const complete = Boolean(nextMapping.date && nextMapping.amount && nextMapping.description);
+    setStep(!verbose && complete ? "preview" : "map");
   }
 
   function applyCsvText(csvText: string, name: string) {
@@ -547,7 +554,7 @@ export function CsvImportPage() {
     setAmountFormat(defaults.amountFormat);
     setParseError(null);
     setConvertedCsv(csvText);
-    setStep("map");
+    goAfterParse(defaults.mapping);
     return true;
   }
 
@@ -778,6 +785,16 @@ export function CsvImportPage() {
                 {t("transactions.import.sourceAlfaHtml")}
               </Button>
             </div>
+
+            <label className="flex items-center gap-2 text-xs text-text-muted">
+              <input
+                type="checkbox"
+                checked={verbose}
+                onChange={(event) => setVerbose(event.target.checked)}
+                className="h-3.5 w-3.5 accent-text-primary"
+              />
+              {t("transactions.import.verbose")}
+            </label>
 
             {uploadSource === "csv" ? (
               <>
