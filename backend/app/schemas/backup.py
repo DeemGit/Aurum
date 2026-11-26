@@ -30,6 +30,10 @@ class AccountBackup(BaseModel):
     is_archived: bool
     # Defaulted so backups from before cashback_rounding still restore.
     cashback_rounding: CashbackRounding = CashbackRounding.PERCENT_FLOOR
+    # Credit-card cycle; absent in older backups.
+    statement_day: int | None = None
+    payment_day: int | None = None
+    grace_period_days: int | None = None
 
 
 class CategoryBackup(BaseModel):

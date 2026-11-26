@@ -12,6 +12,10 @@ export interface Account {
   color: string | null;
   is_archived: boolean;
   cashback_rounding: CashbackRounding;
+  /** Credit-card cycle start day (1–28); null for other types. */
+  statement_day?: number | null;
+  payment_day?: number | null;
+  grace_period_days?: number | null;
 }
 
 // The Accounts management page's shape — /api/accounts' own endpoints add a
@@ -21,6 +25,9 @@ export interface Account {
 // a silent `undefined` at runtime.
 export interface AccountWithBalance extends Account {
   balance: string;
+  /** Unpaid amount due by credit_due_date; null when not applicable. */
+  credit_due_amount?: string | null;
+  credit_due_date?: string | null;
 }
 
 export interface AccountInput {
@@ -28,6 +35,9 @@ export interface AccountInput {
   type: AccountType;
   currency: string;
   cashback_rounding?: CashbackRounding;
+  statement_day?: number | null;
+  payment_day?: number | null;
+  grace_period_days?: number | null;
 }
 
 export interface Category {

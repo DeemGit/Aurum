@@ -12,8 +12,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Account
+from app.models.enums import AccountType
 from app.models.transaction import Transaction
-from app.schemas.account import AccountCreate, AccountUpdate, AccountWithBalance
+from app.schemas.account import AccountCreate, AccountUpdate, AccountWithBalance, _credit_cycle_fields_ok
+from app.services.credit_card_service import credit_due_for_account
 from app.services.money_effects import apply_balance_delta
 
 
@@ -42,7 +44,8 @@ async def _account_balances(session: AsyncSession) -> dict[int, Decimal]:
     return balances
 
 
-def _to_read(account: Account, balance: Decimal) -> AccountWithBalance:
+async def _to_read(session: AsyncSession, account: Account, balance: Decimal) -> AccountWithBalance:
+    due_amount, due_date = await credit_due_for_account(session, account)
     return AccountWithBalance(
         id=account.id,
         name=account.name,
@@ -51,7 +54,12 @@ def _to_read(account: Account, balance: Decimal) -> AccountWithBalance:
         color=account.color,
         is_archived=account.is_archived,
         cashback_rounding=account.cashback_rounding,
+        statement_day=account.statement_day,
+        payment_day=account.payment_day,
+        grace_period_days=account.grace_period_days,
         balance=balance,
+        credit_due_amount=due_amount,
+        credit_due_date=due_date,
     )
 
 
@@ -61,7 +69,9 @@ async def list_accounts(session: AsyncSession, include_archived: bool) -> list[A
         stmt = stmt.where(Account.is_archived.is_(False))
     accounts = (await session.execute(stmt)).scalars().all()
     balances = await _account_balances(session)
-    return [_to_read(account, balances.get(account.id, Decimal("0"))) for account in accounts]
+    return [
+        await _to_read(session, account, balances.get(account.id, Decimal("0"))) for account in accounts
+    ]
 
 
 async def create_account(session: AsyncSession, payload: AccountCreate) -> AccountWithBalance:
@@ -70,7 +80,7 @@ async def create_account(session: AsyncSession, payload: AccountCreate) -> Accou
     await session.commit()
     await session.refresh(account)
     # A brand-new account has no transactions yet — no need to query.
-    return _to_read(account, Decimal("0"))
+    return await _to_read(session, account, Decimal("0"))
 
 
 async def update_account(session: AsyncSession, account_id: int, payload: AccountUpdate) -> AccountWithBalance:
@@ -78,12 +88,32 @@ async def update_account(session: AsyncSession, account_id: int, payload: Accoun
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
     updates = payload.model_dump(exclude_unset=True)
+
+    effective_type = updates.get("type", account.type)
+    # When leaving credit_card, clear cycle fields even if the client omitted them.
+    if effective_type != AccountType.CREDIT_CARD:
+        updates["statement_day"] = None
+        updates["payment_day"] = None
+        updates["grace_period_days"] = None
+    else:
+        statement_day = updates.get("statement_day", account.statement_day)
+        payment_day = updates.get("payment_day", account.payment_day)
+        grace_period_days = updates.get("grace_period_days", account.grace_period_days)
+        problem = _credit_cycle_fields_ok(
+            type=effective_type,
+            statement_day=statement_day,
+            payment_day=payment_day,
+            grace_period_days=grace_period_days,
+        )
+        if problem:
+            raise HTTPException(status_code=422, detail=problem)
+
     for field, value in updates.items():
         setattr(account, field, value)
     await session.commit()
     await session.refresh(account)
     balances = await _account_balances(session)
-    return _to_read(account, balances.get(account.id, Decimal("0")))
+    return await _to_read(session, account, balances.get(account.id, Decimal("0")))
 
 
 async def delete_account(session: AsyncSession, account_id: int) -> None:

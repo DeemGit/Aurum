@@ -1,5 +1,5 @@
 """An account is any place money lives: bank account, card, cash, wallet."""
-from sqlalchemy import Boolean, Enum, String
+from sqlalchemy import Boolean, Enum, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -35,6 +35,13 @@ class Account(Base, TimestampMixin):
         nullable=False,
         default=CashbackRounding.PERCENT_FLOOR,
     )
+    # Credit-card billing cycle (nullable for other account types).
+    # statement_day: first day of the reporting period (e.g. 25).
+    # payment_day: calendar day the closed period must be repaid (e.g. 18).
+    # grace_period_days: bank-stated max grace (display); due date uses payment_day.
+    statement_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payment_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    grace_period_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     transactions: Mapped[list["Transaction"]] = relationship(
         back_populates="account",
