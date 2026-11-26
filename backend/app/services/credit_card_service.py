@@ -173,17 +173,7 @@ async def credit_due_for_account(
     )
     rows = (await session.execute(stmt)).scalars().all()
 
-    charges: list[tuple[date_, Decimal]] = []
-    payments: list[tuple[date_, Decimal]] = []
-    for tx in rows:
-        if tx.account_id == account.id and tx.type == TransactionType.EXPENSE:
-            charges.append((tx.date, tx.amount))
-        elif tx.account_id == account.id and tx.type == TransactionType.REFUND:
-            charges.append((tx.date, -tx.amount))
-        elif tx.type == TransactionType.TRANSFER and tx.transfer_account_id == account.id:
-            credited = tx.transfer_amount if tx.transfer_amount is not None else tx.amount
-            payments.append((tx.date, credited))
-
+    charges, payments = collect_card_charges_and_payments(account.id, rows)
     return allocate_credit_due(
         statement_day=account.statement_day,
         payment_day=account.payment_day,
@@ -191,3 +181,29 @@ async def credit_due_for_account(
         payments=payments,
         today=today,
     )
+
+
+def collect_card_charges_and_payments(
+    card_id: int,
+    rows: list,
+) -> tuple[list[tuple[date_, Decimal]], list[tuple[date_, Decimal]]]:
+    """Map card-related transactions to statement charges and repayments.
+
+    Outbound transfers (cash-out / move to another account) are period charges
+    (amount + fee); inbound transfers are payments. Destination credit stays a
+    transfer, not income.
+    """
+    charges: list[tuple[date_, Decimal]] = []
+    payments: list[tuple[date_, Decimal]] = []
+    for tx in rows:
+        if tx.account_id == card_id and tx.type == TransactionType.EXPENSE:
+            charges.append((tx.date, tx.amount))
+        elif tx.account_id == card_id and tx.type == TransactionType.REFUND:
+            charges.append((tx.date, -tx.amount))
+        elif tx.type == TransactionType.TRANSFER and tx.account_id == card_id:
+            fee = tx.fee_amount or Decimal("0")
+            charges.append((tx.date, tx.amount + fee))
+        elif tx.type == TransactionType.TRANSFER and tx.transfer_account_id == card_id:
+            credited = tx.transfer_amount if tx.transfer_amount is not None else tx.amount
+            payments.append((tx.date, credited))
+    return charges, payments

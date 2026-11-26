@@ -4,8 +4,12 @@ from decimal import Decimal
 
 from httpx import AsyncClient
 
+from types import SimpleNamespace
+
+from app.models.enums import TransactionType
 from app.services.credit_card_service import (
     allocate_credit_due,
+    collect_card_charges_and_payments,
     due_date_for_period_end,
     statement_period_containing,
 )
@@ -76,6 +80,44 @@ def test_refund_reduces_period_charges():
     )
     assert due == date(2025, 11, 18)
     assert money(amount) == money("800.00")
+
+
+def test_outbound_transfer_from_card_counts_as_charge():
+    """Cash moved off the card is statement debt (amount + fee), not income elsewhere."""
+    card_id = 10
+    rows = [
+        SimpleNamespace(
+            account_id=card_id,
+            transfer_account_id=20,
+            type=TransactionType.TRANSFER,
+            date=date(2025, 9, 26),
+            amount=Decimal("250.00"),
+            transfer_amount=Decimal("250.00"),
+            fee_amount=Decimal("50.00"),
+        ),
+        SimpleNamespace(
+            account_id=30,
+            transfer_account_id=card_id,
+            type=TransactionType.TRANSFER,
+            date=date(2025, 11, 1),
+            amount=Decimal("100.00"),
+            transfer_amount=Decimal("100.00"),
+            fee_amount=Decimal("0"),
+        ),
+    ]
+    charges, payments = collect_card_charges_and_payments(card_id, rows)
+    assert charges == [(date(2025, 9, 26), Decimal("300.00"))]
+    assert payments == [(date(2025, 11, 1), Decimal("100.00"))]
+
+    amount, due = allocate_credit_due(
+        statement_day=25,
+        payment_day=18,
+        charges_by_date=charges,
+        payments=payments,
+        today=date(2025, 11, 10),
+    )
+    assert due == date(2025, 11, 18)
+    assert money(amount) == money("200.00")
 
 
 async def test_credit_card_account_api_due_amount(client: AsyncClient, categories):
